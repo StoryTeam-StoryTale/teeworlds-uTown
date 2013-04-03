@@ -1,5 +1,7 @@
 /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
-/* If you are missing that file, acquire a complete release at teeworlds.com.                */
+/* If you miss that file, contact Pikotee, because he changed some stuff here ...			 */
+/*	... and would like to be mentioned in credits in case of using his code					 */
+
 #include <engine/shared/config.h>
 #include <game/mapitems.h>
 
@@ -484,9 +486,11 @@ void IGameController::Tick()
 	// check for inactive players
 	if(g_Config.m_SvInactiveKickTime > 0)
 	{
+		
 		for(int i = 0; i < MAX_CLIENTS; ++i)
 		{
-			if(GameServer()->m_apPlayers[i] && GameServer()->m_apPlayers[i]->GetTeam() != TEAM_SPECTATORS && !Server()->IsAuthed(i))
+			// Dummy
+			if(GameServer()->m_apPlayers[i] && GameServer()->m_apPlayers[i]->GetTeam() != TEAM_SPECTATORS && !Server()->IsAuthed(i) && !GameServer()->m_apPlayers[i]->m_IsDummy)
 			{
 				if(Server()->Tick() > GameServer()->m_apPlayers[i]->m_LastActionTick+g_Config.m_SvInactiveKickTime*Server()->TickSpeed()*60)
 				{
@@ -502,6 +506,7 @@ void IGameController::Tick()
 						{
 							// move player to spectator if the reserved slots aren't filled yet, kick him otherwise
 							int Spectators = 0;
+
 							for(int j = 0; j < MAX_CLIENTS; ++j)
 								if(GameServer()->m_apPlayers[j] && GameServer()->m_apPlayers[j]->GetTeam() == TEAM_SPECTATORS)
 									++Spectators;
