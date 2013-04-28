@@ -91,6 +91,8 @@ int CConsole::ParseArgs(CResult *pResult, const char *pFormat)
 	int Optional = 0;
 	int Error = 0;
 
+	pResult->ResetVictim();
+
 	pStr = pResult->m_pArgsStart;
 
 	while(1)
@@ -111,7 +113,20 @@ int CConsole::ParseArgs(CResult *pResult, const char *pFormat)
 			if(!(*pStr)) // error, non optional command needs value
 			{
 				if(!Optional)
+				{
 					Error = 1;
+					break;
+				}
+
+				while(*(pFormat - 1))
+				{
+					if(*(pFormat - 1) == 'v')
+					{
+						pResult->SetVictim(CResult::VICTIM_ME);
+						break;
+					}
+					pFormat++;
+				}
 				break;
 			}
 
@@ -150,10 +165,17 @@ int CConsole::ParseArgs(CResult *pResult, const char *pFormat)
 			}
 			else
 			{
+				char* pVictim = 0;
+
+				if (Command != 'v')
 				pResult->AddArgument(pStr);
+				else
+					pVictim = pStr;
 
 				if(Command == 'r') // rest of the string
 					break;
+				else if(Command == 'v') // validate victim
+					pStr = str_skip_to_whitespace(pStr);
 				else if(Command == 'i') // validate int
 					pStr = str_skip_to_whitespace(pStr);
 				else if(Command == 'f') // validate float
@@ -166,12 +188,16 @@ int CConsole::ParseArgs(CResult *pResult, const char *pFormat)
 					pStr[0] = 0;
 					pStr++;
 				}
+
+				if (pVictim)
+					pResult->SetVictim(pVictim);
 			}
 		}
 	}
 
 	return Error;
 }
+
 
 int CConsole::RegisterPrintCallback(int OutputLevel, FPrintCallback pfnPrintCallback, void *pUserData)
 {
@@ -261,6 +287,7 @@ void CConsole::ExecuteLineStroked(int Stroke, const char *pStr)
 		const char *pEnd = pStr;
 		const char *pNextPart = 0;
 		int InString = 0;
+		
 
 		while(*pEnd)
 		{
@@ -321,9 +348,17 @@ void CConsole::ExecuteLineStroked(int Stroke, const char *pStr)
 						m_ExecutionQueue.m_pLast->m_Result = Result;
 					}
 					else
-						pCommand->m_pfnCallback(&Result, pCommand->m_pUserData);
+					{
+					if (Result.HasVictim())
+					{
+									pCommand->m_pfnCallback(&Result, pCommand->m_pUserData);
+							
+						}
+						else
+							pCommand->m_pfnCallback(&Result, pCommand->m_pUserData);
 				}
-			}
+				}
+				}
 			else if(Stroke)
 			{
 				char aBuf[256];
@@ -441,10 +476,10 @@ void CConsole::ConModCommandAccess(IResult *pResult, void *pUser)
 		if(pResult->NumArguments() == 2)
 		{
 			pCommand->SetAccessLevel(pResult->GetInteger(1));
-			str_format(aBuf, sizeof(aBuf), "moderator access for '%s' is now %s", pResult->GetString(0), pCommand->GetAccessLevel() ? "enabled" : "disabled");
+			str_format(aBuf, sizeof(aBuf), "Police access for '%s' is now %s", pResult->GetString(0), pCommand->GetAccessLevel() ? "enabled" : "disabled");
 		}
 		else
-			str_format(aBuf, sizeof(aBuf), "moderator access for '%s' is %s", pResult->GetString(0), pCommand->GetAccessLevel() ? "enabled" : "disabled");
+			str_format(aBuf, sizeof(aBuf), "Police access for '%s' is %s", pResult->GetString(0), pCommand->GetAccessLevel() ? "enabled" : "disabled");
 	}
 	else
 		str_format(aBuf, sizeof(aBuf), "No such command: '%s'.", pResult->GetString(0));
@@ -585,8 +620,8 @@ CConsole::CConsole(int FlagMask)
 	Register("echo", "r", CFGFLAG_SERVER|CFGFLAG_CLIENT, Con_Echo, this, "Echo the text");
 	Register("exec", "r", CFGFLAG_SERVER|CFGFLAG_CLIENT, Con_Exec, this, "Execute the specified file");
 
-	Register("mod_command", "s?i", CFGFLAG_SERVER, ConModCommandAccess, this, "Specify command accessibility for moderators");
-	Register("mod_status", "", CFGFLAG_SERVER, ConModCommandStatus, this, "List all commands which are accessible for moderators");
+	Register("police_command", "s?i", CFGFLAG_SERVER, ConModCommandAccess, this, "Specify command accessibility for police");
+	Register("police_status", "", CFGFLAG_SERVER, ConModCommandStatus, this, "List all commands which are accessible for police");
 
 	// TODO: this should disappear
 	#define MACRO_CONFIG_INT(Name,ScriptName,Def,Min,Max,Flags,Desc) \
@@ -817,3 +852,34 @@ const IConsole::CCommandInfo *CConsole::GetCommandInfo(const char *pName, int Fl
 
 
 extern IConsole *CreateConsole(int FlagMask) { return new CConsole(FlagMask); }
+
+//KlickFoots f2 cmds <3
+int CConsole::CResult::GetVictim()
+{
+	return m_Victim;
+}
+
+void CConsole::CResult::ResetVictim()
+{
+	m_Victim = VICTIM_NONE;
+}
+
+bool CConsole::CResult::HasVictim()
+{
+	return m_Victim != VICTIM_NONE;
+}
+
+void CConsole::CResult::SetVictim(int Victim)
+{
+	m_Victim = clamp<int>(Victim, VICTIM_NONE, MAX_CLIENTS - 1);
+}
+
+void CConsole::CResult::SetVictim(const char *pVictim)
+{
+	if(!str_comp(pVictim, "me"))
+		m_Victim = VICTIM_ME;
+	else if(!str_comp(pVictim, "all"))
+		m_Victim = VICTIM_ALL;
+	else
+		m_Victim = clamp<int>(str_toint(pVictim), 0, MAX_CLIENTS - 1);
+}

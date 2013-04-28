@@ -27,6 +27,10 @@ private:
 	float m_Force;
 	int m_StartTick;
 	bool m_Explosive;
+
+	// City
+	vec2 m_BouncePos;
+	int m_Bounces;
 };
 
 #endif

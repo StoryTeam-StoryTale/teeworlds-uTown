@@ -3,6 +3,8 @@
 #include <game/generated/protocol.h>
 #include <game/server/gamecontext.h>
 #include "projectile.h"
+#include "game/server/city/plasma.h"
+
 
 CProjectile::CProjectile(CGameWorld *pGameWorld, int Type, int Owner, vec2 Pos, vec2 Dir, int Span,
 		int Damage, bool Explosive, float Force, int SoundImpact, int Weapon)
@@ -19,6 +21,8 @@ CProjectile::CProjectile(CGameWorld *pGameWorld, int Type, int Owner, vec2 Pos, 
 	m_Weapon = Weapon;
 	m_StartTick = Server()->Tick();
 	m_Explosive = Explosive;
+
+	m_Bounces = 0;
 
 	GameWorld()->InsertEntity(this);
 }
@@ -51,23 +55,80 @@ vec2 CProjectile::GetPos(float Time)
 			break;
 	}
 
+
 	return CalcPos(m_Pos, m_Direction, Curvature, Speed, Time);
 }
 
 
 void CProjectile::Tick()
 {
+	
 	float Pt = (Server()->Tick()-m_StartTick-1)/(float)Server()->TickSpeed();
 	float Ct = (Server()->Tick()-m_StartTick)/(float)Server()->TickSpeed();
 	vec2 PrevPos = GetPos(Pt);
 	vec2 CurPos = GetPos(Ct);
-	int Collide = GameServer()->Collision()->IntersectLine(PrevPos, CurPos, &CurPos, 0);
+	// City
+	int Collide = GameServer()->Collision()->IntersectLine(PrevPos, CurPos, &CurPos, &m_BouncePos);
 	CCharacter *OwnerChar = GameServer()->GetPlayerChar(m_Owner);
 	CCharacter *TargetChr = GameServer()->m_World.IntersectCharacter(PrevPos, CurPos, 6.0f, CurPos, OwnerChar);
 
+	if(TargetChr)
+	{
+		if(TargetChr->GetPlayer()->m_Insta)
+			return;
+	}
+
 	m_LifeSpan--;
 
-	if(TargetChr || Collide || m_LifeSpan < 0 || GameLayerClipped(CurPos))
+	bool Destroy = false;
+	const int MAX_PLASMA = 4*16;
+
+	CPlasma *apEnts[MAX_PLASMA];
+	int Num = GameServer()->m_World.FindEntities(CurPos, 1024, (CEntity**)apEnts,
+					MAX_PLASMA, CGameWorld::ENTTYPE_PLASMA);
+
+	for(int i = 0; i < Num; i++)
+	{
+		CPlasma *pTarget = apEnts[i];
+
+		if(pTarget)
+		{
+			if(distance(pTarget->m_Pos, CurPos) < 16)
+			{
+				pTarget->Reset();
+				Destroy = true;
+			}
+		}
+	}
+
+	int Bounces;
+
+	// City
+	if(OwnerChar && TargetChr)
+	{
+		if(OwnerChar->GetPlayer()->m_AccData.m_GunFreeze && m_Type == WEAPON_GUN && !TargetChr->m_God && !TargetChr->Protected())
+			TargetChr->Freeze(OwnerChar->GetPlayer()->m_AccData.m_GunFreeze * Server()->TickSpeed());
+	}
+
+	if(OwnerChar)
+	{
+		Bounces = OwnerChar->Protected()?0:OwnerChar->GetPlayer()->m_AccData.m_GrenadeBounce;
+
+		if(Collide && m_Weapon == WEAPON_GRENADE && m_Bounces <= Bounces)
+		{
+			vec2 TempPos = m_BouncePos;
+			vec2 TempDir = m_Direction * 4.0f;
+
+			GameServer()->Collision()->MovePoint(&TempPos, &TempDir, 1.0f, 0);
+			m_Pos = TempPos;
+			m_Direction = normalize(TempDir);
+			m_StartTick = Server()->Tick();
+			m_Bounces++;
+		}
+	}
+
+
+	if(TargetChr || Collide || m_LifeSpan < 0 || GameLayerClipped(CurPos) || Destroy)
 	{
 		if(m_LifeSpan >= 0 || m_Weapon == WEAPON_GRENADE)
 			GameServer()->CreateSound(CurPos, m_SoundImpact);
@@ -78,7 +139,9 @@ void CProjectile::Tick()
 		else if(TargetChr)
 			TargetChr->TakeDamage(m_Direction * max(0.001f, m_Force), m_Damage, m_Owner, m_Weapon);
 
-		GameServer()->m_World.DestroyEntity(this);
+		if((Bounces && (!Collide || m_Weapon != WEAPON_GRENADE || m_LifeSpan < 0 || m_Bounces > Bounces || !OwnerChar)) || !Bounces || Destroy)
+			GameServer()->m_World.DestroyEntity(this);
+		
 	}
 }
 
@@ -99,7 +162,29 @@ void CProjectile::Snap(int SnappingClient)
 	if(NetworkClipped(SnappingClient, GetPos(Ct)))
 		return;
 
+	
+
+	CCharacter *pOwner = GameServer()->GetPlayerChar(m_Owner);
+
+	if(pOwner)
+	{
+		if(pOwner->m_Invisible == 2 && !Server()->IsAuthed(SnappingClient) && SnappingClient != m_Owner)
+			return;
+	}
 	CNetObj_Projectile *pProj = static_cast<CNetObj_Projectile *>(Server()->SnapNewItem(NETOBJTYPE_PROJECTILE, m_ID, sizeof(CNetObj_Projectile)));
 	if(pProj)
 		FillInfo(pProj);
+	
+
+
+	/*if(SnappingClient == m_Owner)
+	{
+		CNetEvent_Spawn *ev = (CNetEvent_Spawn *)GameServer()->m_Events.Create(NETEVENTTYPE_SPAWN, sizeof(CNetEvent_Spawn));
+		if(ev)
+		{
+			ev->m_X = (int)m_Pos.x;
+			ev->m_Y = (int)m_Pos.y;
+		}
+	}*/
+		
 }

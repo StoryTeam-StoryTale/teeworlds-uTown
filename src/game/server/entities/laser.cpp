@@ -4,7 +4,7 @@
 #include <game/server/gamecontext.h>
 #include "laser.h"
 
-CLaser::CLaser(CGameWorld *pGameWorld, vec2 Pos, vec2 Direction, float StartEnergy, int Owner)
+CLaser::CLaser(CGameWorld *pGameWorld, vec2 Pos, vec2 Direction, float StartEnergy, int Owner, int Type)
 : CEntity(pGameWorld, CGameWorld::ENTTYPE_LASER)
 {
 	m_Pos = Pos;
@@ -13,6 +13,7 @@ CLaser::CLaser(CGameWorld *pGameWorld, vec2 Pos, vec2 Direction, float StartEner
 	m_Dir = Direction;
 	m_Bounces = 0;
 	m_EvalTick = 0;
+	m_Type = Type;
 	GameWorld()->InsertEntity(this);
 	DoBounce();
 }
@@ -23,13 +24,60 @@ bool CLaser::HitCharacter(vec2 From, vec2 To)
 	vec2 At;
 	CCharacter *OwnerChar = GameServer()->GetPlayerChar(m_Owner);
 	CCharacter *Hit = GameServer()->m_World.IntersectCharacter(m_Pos, To, 0.f, At, OwnerChar);
+
 	if(!Hit)
 		return false;
+
+	if(!OwnerChar)
+	{
+		if(Hit->m_GameZone && Hit->m_Frozen && m_Type == WEAPON_RIFLE)
+			Hit->Unfreeze();
+		else if(m_Type == WEAPON_RIFLE)
+			Hit->TakeDamage(vec2(0.f, 0.f), GameServer()->Tuning()->m_LaserDamage, m_Owner, WEAPON_RIFLE);
+		return false;
+	}
+
+	//CCharacter *pTarget = GameServer()->GetPlayerChar(Hit->GetPlayer()->GetCID());
 
 	m_From = From;
 	m_Pos = At;
 	m_Energy = -1;
-	Hit->TakeDamage(vec2(0.f, 0.f), GameServer()->Tuning()->m_LaserDamage, m_Owner, WEAPON_RIFLE);
+
+	if(m_Type == WEAPON_SHOTGUN)
+	{
+		Hit->m_Core.m_Vel + normalize(From - Hit->m_Core.m_Pos) * 10;
+		return true;
+	}
+
+	if(OwnerChar->GetPlayer()->m_Insta && Hit->GetPlayer()->m_Insta)
+		Hit->Die(OwnerChar->GetPlayer()->GetCID(), WEAPON_RIFLE);
+	else if(Hit->m_GameZone && OwnerChar->m_GameZone && Hit->m_Frozen)
+		Hit->Unfreeze();
+	else if(OwnerChar->m_JailRifle && !Hit->GetPlayer()->m_Insta && !OwnerChar->m_GameZone)
+	{
+		char zBuf[200];
+	    Hit->GetPlayer()->m_AccData.m_Arrested = 300;
+		Hit->Die(OwnerChar->GetPlayer()->GetCID(), WEAPON_RIFLE);
+  		str_format(zBuf, sizeof zBuf, "'%s' is arrested now", Server()->ClientName(Hit->GetPlayer()->GetCID()));
+		GameServer()->SendChat(-1, CGameContext::CHAT_ALL, zBuf);
+	}
+	else if(!OwnerChar->GetPlayer()->m_Insta && !Hit->GetPlayer()->m_Insta)
+		Hit->TakeDamage(vec2(0.f, 0.f), GameServer()->Tuning()->m_LaserDamage, m_Owner, WEAPON_RIFLE);
+	
+	// City
+	if(OwnerChar && !Hit->GetPlayer()->m_AccData.m_Arrested && !Hit->GetPlayer()->m_Insta && !Hit->Protected())
+	{
+		if(GameServer()->m_apPlayers[m_Owner]->m_AccData.m_RifleSwap && !OwnerChar->GetPlayer()->m_Insta)
+		{
+			if(!OwnerChar->Protected() && !OwnerChar->m_JailRifle && !OwnerChar->GetPlayer()->m_AccData.m_Arrested)
+			{
+				vec2 TempPos = OwnerChar->m_Pos;
+				OwnerChar->m_Core.m_Pos = Hit->m_Pos;
+				Hit->m_Core.m_Pos = TempPos;
+			}
+		}
+	}
+
 	return true;
 }
 

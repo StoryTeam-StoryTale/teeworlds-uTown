@@ -77,6 +77,10 @@ void CPickup::Tick()
 							GameServer()->CreateSound(m_Pos, SOUND_PICKUP_SHOTGUN);
 						else if(m_Subtype == WEAPON_RIFLE)
 							GameServer()->CreateSound(m_Pos, SOUND_PICKUP_SHOTGUN);
+						else if(m_Subtype == WEAPON_HAMMER)
+							GameServer()->CreateSound(m_Pos, SOUND_PICKUP_GRENADE);
+						else if(m_Subtype == WEAPON_GUN)
+							GameServer()->CreateSound(m_Pos, SOUND_PICKUP_SHOTGUN);
 
 						if(pChr->GetPlayer())
 							GameServer()->SendWeaponPickup(pChr->GetPlayer()->GetCID(), m_Subtype);

@@ -9,6 +9,13 @@
 #include "gamecontroller.h"
 #include "gamecontext.h"
 
+#include "city/entities/door.h"
+#include "city/entities/trigger.h"
+#include "city/entities/teleport.h"
+#include "city/entities/carousel.h"
+#include "city/shopitems/vip.h"
+#include "city/shopitems/health.h"
+#include "city/home.h"
 
 IGameController::IGameController(class CGameContext *pGameServer)
 {
@@ -61,7 +68,7 @@ void IGameController::EvaluateSpawnType(CSpawnEval *pEval, int Type)
 {
 	// get spawn point
 	for(int i = 0; i < m_aNumSpawnPoints[Type]; i++)
-	{
+	{	
 		// check if the position is occupado
 		CCharacter *aEnts[MAX_CLIENTS];
 		int Num = GameServer()->m_World.FindEntities(m_aaSpawnPoints[Type][i], 64, (CEntity**)aEnts, MAX_CLIENTS, CGameWorld::ENTTYPE_CHARACTER);
@@ -92,7 +99,7 @@ void IGameController::EvaluateSpawnType(CSpawnEval *pEval, int Type)
 	}
 }
 
-bool IGameController::CanSpawn(int Team, vec2 *pOutPos)
+bool IGameController::CanSpawn(int Team, vec2 *pOutPos, int Jailed)
 {
 	CSpawnEval Eval;
 
@@ -109,15 +116,22 @@ bool IGameController::CanSpawn(int Team, vec2 *pOutPos)
 		if(!Eval.m_Got)
 		{
 			EvaluateSpawnType(&Eval, 0);
-			if(!Eval.m_Got)
-				EvaluateSpawnType(&Eval, 1+((Team+1)&1));
+			
 		}
 	}
 	else
 	{
-		EvaluateSpawnType(&Eval, 0);
-		EvaluateSpawnType(&Eval, 1);
+		if(Jailed == 1)
+			EvaluateSpawnType(&Eval, 1);
+		else if(Jailed == 2)
 		EvaluateSpawnType(&Eval, 2);
+		else
+		EvaluateSpawnType(&Eval, 0);
+		
+
+
+		// City
+		//EvaluateSpawnType(&Eval, 3);
 	}
 
 	*pOutPos = Eval.m_Pos;
@@ -132,9 +146,9 @@ bool IGameController::OnEntity(int Index, vec2 Pos)
 
 	if(Index == ENTITY_SPAWN)
 		m_aaSpawnPoints[0][m_aNumSpawnPoints[0]++] = Pos;
-	else if(Index == ENTITY_SPAWN_RED)
+	else if(Index == ENTITY_JAIL)
 		m_aaSpawnPoints[1][m_aNumSpawnPoints[1]++] = Pos;
-	else if(Index == ENTITY_SPAWN_BLUE)
+	else if(Index == ENTITY_INSTA_SPAWN)
 		m_aaSpawnPoints[2][m_aNumSpawnPoints[2]++] = Pos;
 	else if(Index == ENTITY_ARMOR_1)
 		Type = POWERUP_ARMOR;
@@ -160,15 +174,52 @@ bool IGameController::OnEntity(int Index, vec2 Pos)
 		Type = POWERUP_NINJA;
 		SubType = WEAPON_NINJA;
 	}
+	else if(Index == ENTITY_WEAPON_HAMMER)
+	{
+		Type = POWERUP_WEAPON;
+		SubType = WEAPON_HAMMER;
+	}
+	else if(Index == ENTITY_WEAPON_GUN)
+	{
+		Type = POWERUP_WEAPON;
+		SubType = WEAPON_GUN;
+	}
+
+	// City
+	else if(Index == ENTITY_HOME)
+		new CHome(&GameServer()->m_World, Pos);
+	else if(Index == ENTITY_DOOR_ID || Index == ENTITY_DOOR_NR)
+		new CDoor(&GameServer()->m_World, Pos, Index == ENTITY_DOOR_ID?true:false);
+	else if(Index == ENTITY_TRIGGER_ID || Index == ENTITY_TRIGGER_NR)
+		new CTrigger(&GameServer()->m_World, Pos, Index == ENTITY_TRIGGER_ID?true:false);
+	else if(Index == ENTITY_FROM)
+		new CTeleport(&GameServer()->m_World, Pos, true);
+	else if(Index == ENTITY_TO)
+	{
+		new CTeleport(&GameServer()->m_World, Pos, false);
+		GameServer()->m_TeleNum++;
+	}
+	else if(Index == ENTITY_CAROUSEL)
+		new CCarousel(&GameServer()->m_World, Pos);
+			else if(Index == ENTITY_FLAGSTAND_BLUE)
+		new CVip(&GameServer()->m_World, Pos);
+			else if(Index == ENTITY_FLAGSTAND_RED)
+		new CBuyHealth(&GameServer()->m_World, Pos);
+	/*else if(Index == ENTITY_JAIL)
+		m_aaSpawnPoints[3][m_aNumSpawnPoints[3]++] = Pos;*/
+
+
+	else
+		return false;
+
 
 	if(Type != -1)
 	{
 		CPickup *pPickup = new CPickup(&GameServer()->m_World, Type, SubType);
 		pPickup->m_Pos = Pos;
-		return true;
 	}
 
-	return false;
+	return true;
 }
 
 void IGameController::EndRound()
@@ -341,13 +392,61 @@ int IGameController::OnCharacterDeath(class CCharacter *pVictim, class CPlayer *
 	if(!pKiller || Weapon == WEAPON_GAME)
 		return 0;
 	if(pKiller == pVictim->GetPlayer())
+	{
+		if(pVictim->GetPlayer()->m_AccData.m_Money >= 50)
+			pVictim->GetPlayer()->m_AccData.m_Money -= 50;
+
 		pVictim->GetPlayer()->m_Score--; // suicide
+	}
 	else
 	{
 		if(IsTeamplay() && pVictim->GetPlayer()->GetTeam() == pKiller->GetTeam())
 			pKiller->m_Score--; // teamkill
 		else
+		{
+			if(!pKiller->m_Insta)
+			{
+				char aKillmsg[50];
 			pKiller->m_Score++; // normal kill
+			pKiller->m_AccData.m_Money += 500;
+			str_format(aKillmsg, sizeof(aKillmsg), "+500 TC || current %i TC",pKiller->m_AccData.m_Money);
+				pKiller->GetCharacter()->GameServer()->SendChatTarget(pKiller->GetCID(), aKillmsg);
+			}
+			else
+			{
+				char aKillmsg[200];
+				char aBuf[50];
+				pKiller->m_Score++;
+				pKiller->GetCharacter()->m_InstaKills++;
+				pKiller->m_AccData.m_Money += 1000+(pKiller->GetCharacter()->m_InstaKills*100);
+				str_format(aKillmsg, sizeof(aKillmsg), "+%i TC || Current: %i TC || %i Insta-Kills",pKiller->GetCharacter()->m_InstaKills*100+1000,pKiller->m_AccData.m_Money,pKiller->GetCharacter()->m_InstaKills);
+				pKiller->GetCharacter()->GameServer()->SendChatTarget(pKiller->GetCID(), aKillmsg);
+
+				if(pVictim->m_InstaKills >= 5)
+				{
+					str_format(aBuf, sizeof(aBuf), "%s killed %s with %i kills", Server()->ClientName(pKiller->GetCID()), Server()->ClientName(pVictim->GetPlayer()->GetCID()),pVictim->m_InstaKills);
+					GameServer()->SendChat(-1, CGameContext::CHAT_ALL, aBuf);
+				}
+
+				//Kill msg 4 all <3
+				if(!(pKiller->GetCharacter()->m_InstaKills%5) && pKiller->GetCharacter()->m_InstaKills <= 50)
+				{
+					if(pKiller->GetCharacter()->m_InstaKills == 5)
+						str_format(aBuf, sizeof(aBuf), "%s is on a killing spree with 5 kills", Server()->ClientName(pKiller->GetCID()));
+					else if(pKiller->GetCharacter()->m_InstaKills == 10)
+						str_format(aBuf, sizeof(aBuf), "%s is unstoppable with 10 kills", Server()->ClientName(pKiller->GetCID()));
+					else if(pKiller->GetCharacter()->m_InstaKills >= 15 && pKiller->GetCharacter()->m_InstaKills <= 45)
+						str_format(aBuf, sizeof(aBuf), "%s is dominating with %i kills", Server()->ClientName(pKiller->GetCID()), pKiller->GetCharacter()->m_InstaKills);
+					else if(pKiller->m_AccData.m_Money,pKiller->GetCharacter()->m_InstaKills == 50)
+						str_format(aBuf, sizeof(aBuf), "%s is Godlike! (50 kills)", Server()->ClientName(pKiller->GetCID()));
+
+					GameServer()->SendChat(-1, CGameContext::CHAT_ALL, aBuf);
+				}
+				
+			}
+
+
+		}
 	}
 	if(Weapon == WEAPON_SELF)
 		pVictim->GetPlayer()->m_RespawnTick = Server()->Tick()+Server()->TickSpeed()*3.0f;
@@ -356,12 +455,23 @@ int IGameController::OnCharacterDeath(class CCharacter *pVictim, class CPlayer *
 
 void IGameController::OnCharacterSpawn(class CCharacter *pChr)
 {
-	// default health
-	pChr->IncreaseHealth(10);
+	// default health / armor
+	pChr->IncreaseHealth(pChr->GetPlayer()->m_AccData.m_Health);
+	pChr->IncreaseArmor(pChr->GetPlayer()->m_AccData.m_Armor);
 
 	// give default weapons
 	pChr->GiveWeapon(WEAPON_HAMMER, -1);
 	pChr->GiveWeapon(WEAPON_GUN, 10);
+
+	if(pChr->GetPlayer()->m_AccData.m_AllWeapons)
+	{
+		pChr->GiveWeapon(WEAPON_RIFLE, 10);
+		pChr->GiveWeapon(WEAPON_GRENADE, 10);
+		pChr->GiveWeapon(WEAPON_SHOTGUN, 10);
+	}
+
+	if(pChr->GetPlayer()->m_AccData.m_NinjaStart)
+		pChr->GiveNinja();
 }
 
 void IGameController::DoWarmup(int Seconds)

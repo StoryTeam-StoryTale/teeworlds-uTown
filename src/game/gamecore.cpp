@@ -1,6 +1,7 @@
 /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 #include "gamecore.h"
+#include "mapitems.h"
 
 const char *CTuningParams::m_apNames[] =
 {
@@ -88,7 +89,8 @@ void CCharacterCore::Tick(bool UseInput)
 
 	vec2 TargetDirection = normalize(vec2(m_Input.m_TargetX, m_Input.m_TargetY));
 
-	m_Vel.y += m_pWorld->m_Tuning.m_Gravity;
+	// City
+		m_Vel.y += m_pWorld->m_Tuning.m_Gravity;
 
 	float MaxSpeed = Grounded ? m_pWorld->m_Tuning.m_GroundControlSpeed : m_pWorld->m_Tuning.m_AirControlSpeed;
 	float Accel = Grounded ? m_pWorld->m_Tuning.m_GroundControlAccel : m_pWorld->m_Tuning.m_AirControlAccel;
@@ -155,12 +157,15 @@ void CCharacterCore::Tick(bool UseInput)
 	}
 
 	// add the speed modification according to players wanted direction
-	if(m_Direction < 0)
-		m_Vel.x = SaturatedAdd(-MaxSpeed, MaxSpeed, m_Vel.x, -Accel);
-	if(m_Direction > 0)
-		m_Vel.x = SaturatedAdd(-MaxSpeed, MaxSpeed, m_Vel.x, Accel);
-	if(m_Direction == 0)
-		m_Vel.x *= Friction;
+	if(!m_pCollision->IsTile(m_Pos, TILE_SPACE))
+	{
+		if(m_Direction < 0)
+			m_Vel.x = SaturatedAdd(-MaxSpeed, MaxSpeed, m_Vel.x, -Accel);
+		if(m_Direction > 0)
+			m_Vel.x = SaturatedAdd(-MaxSpeed, MaxSpeed, m_Vel.x, Accel);
+		if(m_Direction == 0)
+			m_Vel.x *= Friction;
+	}
 
 	// handle jumping
 	// 1 bit = to keep track if a jump has been made on this input
@@ -293,6 +298,7 @@ void CCharacterCore::Tick(bool UseInput)
 		}
 
 		// release hook (max hook time is 1.25
+		
 		m_HookTick++;
 		if(m_HookedPlayer != -1 && (m_HookTick > SERVER_TICK_SPEED+SERVER_TICK_SPEED/5 || !m_pWorld->m_apCharacters[m_HookedPlayer]))
 		{
@@ -334,6 +340,8 @@ void CCharacterCore::Tick(bool UseInput)
 			// handle hook influence
 			if(m_HookedPlayer == i)
 			{
+			if(pCharCore->m_Protected)
+			return;
 				if(Distance > PhysSize*1.50f) // TODO: fix tweakable variable
 				{
 					float Accel = m_pWorld->m_Tuning.m_HookDragAccel * (Distance/m_pWorld->m_Tuning.m_HookLength);

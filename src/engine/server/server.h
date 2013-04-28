@@ -52,6 +52,8 @@ public:
 	enum
 	{
 		AUTHED_NO=0,
+		/*AUTHED_DONOR,
+		AUTHED_POLICE,*/
 		AUTHED_MOD,
 		AUTHED_ADMIN,
 
@@ -101,6 +103,7 @@ public:
 		int m_Score;
 		int m_Authed;
 		int m_AuthTries;
+		int m_AccID;
 
 		const IConsole::CCommandInfo *m_pRconCmdToSend;
 
@@ -145,6 +148,7 @@ public:
 	virtual void SetClientClan(int ClientID, char const *pClan);
 	virtual void SetClientCountry(int ClientID, int Country);
 	virtual void SetClientScore(int ClientID, int Score);
+	virtual void SetClientAccID(int ClientID, int AccID);
 
 	void Kick(int ClientID, const char *pReason);
 
@@ -156,7 +160,15 @@ public:
 
 	int Init();
 
+	int AuthLvl(int ClientID);
 	bool IsAuthed(int ClientID);
+	//KlickFoots stuff
+	bool IsMod(int ClientID);
+	bool IsAdmin(int ClientID);
+	void Logout(int ClientID);
+	void Police(int ClientID,int Switch);
+	void SetRconlvl(int ClientID,int Level);
+	//Normales Zeugs
 	int GetClientInfo(int ClientID, CClientInfo *pInfo);
 	void GetClientAddr(int ClientID, char *pAddrStr, int Size);
 	const char *ClientName(int ClientID);

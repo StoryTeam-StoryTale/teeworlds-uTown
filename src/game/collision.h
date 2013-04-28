@@ -8,11 +8,18 @@
 class CCollision
 {
 	class CTile *m_pTiles;
+	class CTile *m_pCityTiles;
 	int m_Width;
 	int m_Height;
 	class CLayers *m_pLayers;
 
 	bool IsTileSolid(int x, int y);
+	
+
+	// City
+	//int *m_pCityTiles;
+	//int *m_pEntities;
+
 	int GetTile(int x, int y);
 
 public:
@@ -23,7 +30,20 @@ public:
 		COLFLAG_NOHOOK=4,
 	};
 
+	int Number(int x, int y);
+	int Number(vec2 Pos) { return Number(Pos.x, Pos.y); }
+
+	int IsTile(int x, int y, int Type);
+	int IsTile(vec2 Pos, int Type) { return IsTile(Pos.x, Pos.y, Type); }
+
+	int TileShop(int x, int y);
+	int TileShop(vec2 Pos) { return TileShop(Pos.x, Pos.y); }
+
+	int TileMoney(int x, int y);
+	int TileMoney(vec2 Pos) { return TileMoney(Pos.x, Pos.y); }
+
 	CCollision();
+	~CCollision();
 	void Init(class CLayers *pLayers);
 	bool CheckPoint(float x, float y) { return IsTileSolid(round(x), round(y)); }
 	bool CheckPoint(vec2 Pos) { return CheckPoint(Pos.x, Pos.y); }

@@ -6,6 +6,8 @@
 // this include should perhaps be removed
 #include "entities/character.h"
 #include "gamecontext.h"
+#include "city/cmds.h"
+#include "city/account.h"
 
 // player object
 class CPlayer
@@ -95,6 +97,78 @@ public:
 		int m_Min;
 		int m_Max;
 	} m_Latency;
+
+	// City
+	struct
+	{
+		// Main
+		char m_Username[32];
+		char m_Password[32];
+		char m_RconPassword[32];
+		int m_UserID;
+
+		int m_HouseID;
+		unsigned int m_Money;
+		int m_Health;
+		int m_Armor;	
+		int m_Kills;
+
+		// Rank
+		int m_Donor;
+		int m_VIP;
+		int m_Arrested;
+
+		// Player
+		int m_AllWeapons;
+		int m_HealthRegen;
+		int m_InfinityAmmo;
+		int m_InfinityJumps;
+		int m_FastReload;
+		int m_NoSelfDMG;
+
+		// Weapons
+		int m_GrenadeSpread;
+		int m_GrenadeBounce;
+		int m_GrenadeMine;
+
+		int m_ShotgunSpread;
+		int m_ShotgunExplode;
+		int m_ShotgunStars;
+
+		int m_RifleSpread;
+		int m_RifleSwap; 
+		int m_RiflePlasma;
+
+		int m_GunSpread;
+		int m_GunExplode;
+		int m_GunFreeze;
+
+		int m_HammerWalls;
+		int m_HammerShot;
+		int m_HammerKill;
+
+		int m_NinjaPermanent;
+		int m_NinjaStart;
+		int m_NinjaSwitch;
+
+		int m_Level;
+		int m_ExpPoints;
+
+	} m_AccData;
+
+	int m_RainbowColor;
+	bool m_Rainbow;
+	bool m_Insta;
+	int m_AciveUpgrade[NUM_WEAPONS];
+	int m_Authed;
+	char m_aRank[64];
+			
+	//Klickfoots scheiﬂ
+	int m_ReleaseCarousel;
+	int m_Crown;
+
+	class CCmd *m_pChatCmd;
+	class CAccount *m_pAccount;//(CPlayer *m_Player, CGameContext *gameserver);
 
 private:
 	CCharacter *m_pCharacter;

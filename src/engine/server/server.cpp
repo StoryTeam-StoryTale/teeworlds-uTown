@@ -167,6 +167,7 @@ void CServer::CClient::Reset()
 	m_LastInputTick = -1;
 	m_SnapRate = CClient::SNAPRATE_INIT;
 	m_Score = 0;
+	m_AccID = -1;
 }
 
 CServer::CServer() : m_DemoRecorder(&m_SnapshotDelta)
@@ -189,7 +190,50 @@ CServer::CServer() : m_DemoRecorder(&m_SnapshotDelta)
 	Init();
 }
 
+void CServer::Logout(int ClientID)
+{
+	CMsgPacker Msg(NETMSG_RCON_AUTH_STATUS);
+	Msg.AddInt(0);	//authed
+	Msg.AddInt(0);	//cmdlist
+	SendMsgEx(&Msg, MSGFLAG_VITAL, ClientID, true);
 
+	m_aClients[ClientID].m_Authed = AUTHED_NO;
+}
+void CServer::Police(int ClientID, int Switch)
+{
+	CMsgPacker Msg(NETMSG_RCON_AUTH_STATUS);
+	Msg.AddInt(Switch);	//authed
+	Msg.AddInt(Switch);	//cmdlist
+	SendMsgEx(&Msg, MSGFLAG_VITAL, ClientID, true);
+
+	if(Switch)
+	m_aClients[ClientID].m_Authed = AUTHED_MOD;
+	else
+	m_aClients[ClientID].m_Authed = AUTHED_NO;
+
+}
+void CServer::SetRconlvl(int ClientID, int Level)
+{
+	CMsgPacker Msg(NETMSG_RCON_AUTH_STATUS);
+	Msg.AddInt(1);	//authed
+	Msg.AddInt(1);	//cmdlist
+	SendMsgEx(&Msg, MSGFLAG_VITAL, ClientID, true);
+
+	if(Level)
+	{
+		//int SendRconCmds = Unpacker.GetInt();
+		//if(Unpacker.Error() == 0 && SendRconCmds)
+				m_aClients[ClientID].m_pRconCmdToSend = Console()->FirstCommandInfo(Level == 1 ? IConsole::ACCESS_LEVEL_MOD : IConsole::ACCESS_LEVEL_ADMIN, CFGFLAG_SERVER);
+	}
+
+	if(Level == 1)
+		m_aClients[ClientID].m_Authed = AUTHED_MOD;
+	else if(Level == 2)
+		m_aClients[ClientID].m_Authed = AUTHED_ADMIN;
+	else
+		m_aClients[ClientID].m_Authed = AUTHED_NO;
+
+}
 int CServer::TrySetClientName(int ClientID, const char *pName)
 {
 	char aTrimmedName[64];
@@ -271,6 +315,14 @@ void CServer::SetClientScore(int ClientID, int Score)
 		return;
 	m_aClients[ClientID].m_Score = Score;
 }
+//City
+void CServer::SetClientAccID(int ClientID, int AccID)
+{
+	if(ClientID < 0 || ClientID >= MAX_CLIENTS || m_aClients[ClientID].m_State < CClient::STATE_READY)
+		return;
+	m_aClients[ClientID].m_AccID = AccID;
+}
+
 
 void CServer::Kick(int ClientID, const char *pReason)
 {
@@ -323,7 +375,21 @@ int CServer::Init()
 
 	return 0;
 }
-
+// City
+int CServer::AuthLvl(int ClientID)
+{
+	return m_aClients[ClientID].m_Authed;
+}
+//KlickFoots stuff
+bool CServer::IsMod(int ClientID)
+{
+	return m_aClients[ClientID].m_Authed == AUTHED_MOD;
+}
+bool CServer::IsAdmin(int ClientID)
+{
+	return m_aClients[ClientID].m_Authed == AUTHED_ADMIN;
+}
+//Normales Zeugs
 bool CServer::IsAuthed(int ClientID)
 {
 	return m_aClients[ClientID].m_Authed;
@@ -877,6 +943,12 @@ void CServer::ProcessClientPacket(CNetChunk *pPacket)
 				}
 				else if(g_Config.m_SvRconPassword[0] && str_comp(pPw, g_Config.m_SvRconPassword) == 0)
 				{
+					// City
+					/*if(GameServer()->m_apPlayers[ClientID])
+					{
+						str_copy(GameServer()->m_apPlayers[ClientID]->m_AccData.m_RconPassword, pPw, sizeof(GameServer()->m_apPlayers[ClientID]->m_AccData.m_RconPassword));
+					}*/
+
 					CMsgPacker Msg(NETMSG_RCON_AUTH_STATUS);
 					Msg.AddInt(1);	//authed
 					Msg.AddInt(1);	//cmdlist
@@ -1508,8 +1580,8 @@ void CServer::ConStatus(IConsole::IResult *pResult, void *pUser)
 			Addr = pServer->m_NetServer.ClientAddr(i);
 			net_addr_str(&Addr, aAddrStr, sizeof(aAddrStr));
 			if(pServer->m_aClients[i].m_State == CClient::STATE_INGAME)
-				str_format(aBuf, sizeof(aBuf), "id=%d addr=%s name='%s' score=%d", i, aAddrStr,
-					pServer->m_aClients[i].m_aName, pServer->m_aClients[i].m_Score);
+				str_format(aBuf, sizeof(aBuf), "id=%d addr=%s name='%s' score=%d AccountID=%d", i, aAddrStr,
+					pServer->m_aClients[i].m_aName, pServer->m_aClients[i].m_Score,pServer->m_aClients[i].m_AccID);
 			else
 				str_format(aBuf, sizeof(aBuf), "id=%d addr=%s connecting", i, aAddrStr);
 			pServer->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "Server", aBuf);
@@ -1640,7 +1712,7 @@ void CServer::RegisterCommands()
 	Console()->Chain("password", ConchainSpecialInfoupdate, this);
 
 	Console()->Chain("sv_max_clients_per_ip", ConchainMaxclientsperipUpdate, this);
-	Console()->Chain("mod_command", ConchainModCommandUpdate, this);
+	Console()->Chain("police_command", ConchainModCommandUpdate, this);
 	Console()->Chain("console_output_level", ConchainConsoleOutputLevelUpdate, this);
 }
 

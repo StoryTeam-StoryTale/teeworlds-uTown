@@ -63,6 +63,81 @@ public:
 	bool IsAlive() const { return m_Alive; }
 	class CPlayer *GetPlayer() { return m_pPlayer; }
 
+	// City
+	void SaveLoad(int Value);
+	void Tele();
+	void Buy(const char *Name, int *Upgrade, int Price, int Click, int Max);
+	int MouseEvent(vec2 Pos);
+	int NewPlasma();
+	int ActiveWeapon();
+	void ChangeUpgrade(int Value);
+	void HealthRegeneration();
+	void HandleCity();
+	void Booster();
+	void SetPosition(vec2 Pos);
+	void Freeze(int Seconds);
+	void Unfreeze();
+	void Transfer(int Value);
+	bool Protected();
+//KlickFoots Water zeugs 
+	bool m_SingleWater;
+	bool m_Water;
+//KlickFoots Space zeugs
+	bool m_SingleSpace;
+	bool m_Space;
+	//Beides 
+	int m_Luft;
+	//zInsta
+	int m_InstaKills;
+	//Police
+	int m_JailRifle;
+	//Life
+	int m_NeedArmor;
+	int m_NeedHealth;
+	int m_ArmorCost;
+	int m_HealthCost;
+	int m_LifeCost;
+	//Save/Load
+	vec2 m_SavePos;
+	
+
+	bool m_God;
+	bool m_Protected;
+	bool m_GameZone;
+	bool m_IsHammerKilled;
+	int m_Home;
+	int m_Invisible;
+	int m_Walls;
+	int m_Plasma;
+	int m_Frozen;
+	int m_Emote;
+	int m_EmoteType;
+	int m_EmoteStop;
+	int m_Menu;
+	int m_FreezeWeapon;
+	bool m_FreezeEnd;
+	int64 m_FreezeTick;
+	int64 m_LastBroadcast;
+	int64 m_BuyTick;
+	int64 m_SpawnProtection;
+	vec2 m_HammerPos1;
+	vec2 m_HammerPos2;
+
+	// Doors
+	int m_TriggerID[4];
+	int m_TriggerNR[4];
+	int64 m_LastSwitch;
+
+
+	// the player core for the physics
+	CCharacterCore m_Core;
+
+	CNetObj_PlayerInput m_PrevInput;
+	CNetObj_PlayerInput m_Input;
+		
+	int m_Health;
+	int m_Armor;
+
 private:
 	// player controlling this character
 	class CPlayer *m_pPlayer;
@@ -91,9 +166,6 @@ private:
 
 	int m_DamageTaken;
 
-	int m_EmoteType;
-	int m_EmoteStop;
-
 	// last tick that the player took any action ie some input
 	int m_LastAction;
 
@@ -102,15 +174,12 @@ private:
 	CNetObj_PlayerInput m_LatestInput;
 
 	// input
-	CNetObj_PlayerInput m_PrevInput;
-	CNetObj_PlayerInput m_Input;
 	int m_NumInputs;
 	int m_Jumped;
 
 	int m_DamageTakenTick;
 
-	int m_Health;
-	int m_Armor;
+
 
 	// ninja
 	struct
@@ -121,8 +190,7 @@ private:
 		int m_OldVelAmount;
 	} m_Ninja;
 
-	// the player core for the physics
-	CCharacterCore m_Core;
+	
 
 	// info for dead reckoning
 	int m_ReckoningTick; // tick that we are performing dead reckoning From

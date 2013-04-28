@@ -18,6 +18,21 @@ CCollision::CCollision()
 	m_Width = 0;
 	m_Height = 0;
 	m_pLayers = 0;
+
+	
+
+	// City
+	m_pCityTiles = 0;
+	//m_pEnteties = 0;
+}
+
+CCollision::~CCollision()
+{
+   /* delete[] m_pCityTiles;
+    m_pCityTiles = 0;*/
+
+    //delete[] m_pEnteties;
+    //m_pEnteties = 0;
 }
 
 void CCollision::Init(class CLayers *pLayers)
@@ -26,6 +41,18 @@ void CCollision::Init(class CLayers *pLayers)
 	m_Width = m_pLayers->GameLayer()->m_Width;
 	m_Height = m_pLayers->GameLayer()->m_Height;
 	m_pTiles = static_cast<CTile *>(m_pLayers->Map()->GetData(m_pLayers->GameLayer()->m_Data));
+	m_pCityTiles = new CTile[m_Width*m_Height];
+	mem_copy(m_pCityTiles, m_pTiles, sizeof(CTile)*m_Width*m_Height);
+
+	// City
+    //m_pCityTiles = new int[m_Width*m_Height];
+    //m_pEnteties = new int[m_Width*m_Height];
+
+    //for(int i = 0; i < m_Width*m_Height; i++)
+    //{
+    //    m_pCityTiles[i] = 0;
+    //    //m_pEnteties[i] = 0;
+    //}
 
 	for(int i = 0; i < m_Width*m_Height; i++)
 	{
@@ -46,9 +73,49 @@ void CCollision::Init(class CLayers *pLayers)
 			m_pTiles[i].m_Index = COLFLAG_SOLID|COLFLAG_NOHOOK;
 			break;
 		default:
-			m_pTiles[i].m_Index = 0;
+				m_pTiles[i].m_Index = 0;
 		}
 	}
+}
+int CCollision::TileMoney(int x, int y)
+{
+	if(IsTile(x, y, TILE_MONEY100))
+		return 100;
+	else if(IsTile(x, y, TILE_MONEY200))
+		return 200;
+	else if(IsTile(x, y, TILE_MONEY500))
+		return 500;
+
+	return 0;
+}
+
+int CCollision::Number(int x, int y)
+{
+	int Nx = clamp(x/32, 0, m_Width-1);
+	int Ny = clamp(y/32, 0, m_Height-1);
+
+	if(m_pCityTiles[Ny*m_Width+Nx].m_Index < TILE_0 || m_pCityTiles[Ny*m_Width+Nx].m_Index > TILE_9)
+		return -1;
+
+	return m_pCityTiles[Ny*m_Width+Nx].m_Index-TILE_0;
+
+	return -1;
+}
+
+int CCollision::TileShop(int x, int y)
+{
+	int Nx = clamp(x/32, 0, m_Width-1);
+	int Ny = clamp(y/32, 0, m_Height-1);
+
+	return m_pCityTiles[Ny*m_Width+Nx].m_Index == TILE_SHOP;
+}
+
+int CCollision::IsTile(int x, int y, int Type)
+{
+	int Nx = clamp(x/32, 0, m_Width-1);
+	int Ny = clamp(y/32, 0, m_Height-1);
+
+	return m_pCityTiles[Ny*m_Width+Nx].m_Index == Type;
 }
 
 int CCollision::GetTile(int x, int y)

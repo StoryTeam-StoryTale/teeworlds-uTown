@@ -165,6 +165,35 @@ public:
 	virtual const char *GameType();
 	virtual const char *Version();
 	virtual const char *NetVersion();
+
+	private: //KlickFoots Rconcmdsachen^^
+
+		static void ConTeleport(IConsole::IResult *pResult, void *pUserData);
+		static void ConUp(IConsole::IResult *pResult, void *pUserData);
+		static void ConDown(IConsole::IResult *pResult, void *pUserData);
+		static void ConLeft(IConsole::IResult *pResult, void *pUserData);
+		static void ConRight(IConsole::IResult *pResult, void *pUserData);
+		static void ConPolice(IConsole::IResult *pResult, void *pUserData);
+		static void ConVip(IConsole::IResult *pResult, void *pUserData);
+		static void ConDonor(IConsole::IResult *pResult, void *pUserData);
+		static void ConJail(IConsole::IResult *pResult, void *pUserData);
+		static void ConGiveMoney(IConsole::IResult *pResult, void *pUserData);
+		static void ConLogout(IConsole::IResult *pResult, void *pUserData);
+		static void ConUnjail(IConsole::IResult *pResult, void *pUserData);
+
+		public: //Ende :D
+
+	// City
+	void RefreshIDs();
+	void SendMotd(int ClientID, const char *pText);
+	NETADDR addr;
+	NETSOCKET Socket;
+	int m_aaExtIDs[2][MAX_CLIENTS];
+	int64 m_LastBroadcast;
+	int m_TeleNR[MAX_CLIENTS];
+	int m_TeleNum;
+	//int m_TeleID[MAX_CLIENTS];
+
 };
 
 inline int CmaskAll() { return -1; }

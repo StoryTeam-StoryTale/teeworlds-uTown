@@ -6,6 +6,7 @@
 #include <new>
 #include <base/vmath.h>
 #include <game/server/gameworld.h>
+#include <engine/shared/config.h>
 
 #define MACRO_ALLOC_HEAP() \
 	public: \
@@ -148,6 +149,9 @@ public:
 			Contains the current posititon of the entity.
 	*/
 	vec2 m_Pos;
+	bool m_Visible;
+	int m_Value;
+	int64 m_LastClick;
 };
 
 #endif

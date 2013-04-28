@@ -4,6 +4,48 @@
 #define GAME_VARIABLES_H
 #undef GAME_VARIABLES_H // this file will be included several times
 
+// City
+MACRO_CONFIG_INT(EuHealth, eu_health, 50000, 0, 1000000, CFGFLAG_SERVER, "Price - Health+1")
+MACRO_CONFIG_INT(EuArmor, eu_armor, 50000, 0, 1000000, CFGFLAG_SERVER, "Price - Armor+1")
+
+MACRO_CONFIG_INT(EuVIP, eu_vip, 2500000, 0, 100000000, CFGFLAG_SERVER, "Price - VIP")
+//MACRO_CONFIG_INT(EuArrested, eu_arrested, 10000, 0, 1000000, CFGFLAG_SERVER, "Price - Freedom")
+
+MACRO_CONFIG_INT(EuAllWeapons, eu_allweapons, 72000, 0, 1000000, CFGFLAG_SERVER, "Price - All weapons")
+MACRO_CONFIG_INT(EuHealthRegen, eu_health_regen, 72000, 0, 1000000, CFGFLAG_SERVER, "Price - Health Regeneration")
+MACRO_CONFIG_INT(EuInfAmmo, eu_infammo, 180000, 0, 1000000, CFGFLAG_SERVER, "Price - Infinity ammo")
+MACRO_CONFIG_INT(EuInfJumps, eu_infjumps, 18000, 0, 1000000, CFGFLAG_SERVER, "Price - Infinity jumps")
+MACRO_CONFIG_INT(EuFastReload, eu_fast_reload, 360000, 0, 1000000, CFGFLAG_SERVER, "Price - Fast reload")
+MACRO_CONFIG_INT(EuNoSelfDMG, eu_no_selfdmg, 18000, 0, 1000000, CFGFLAG_SERVER, "Price - No self Damage")
+
+MACRO_CONFIG_INT(EuGrenadeSpread, eu_grenade_spread, 180000, 0, 1000000, CFGFLAG_SERVER, "Price - Grenade spread")
+MACRO_CONFIG_INT(EuGrenadeBounce, eu_grenade_bounce, 180000, 0, 1000000, CFGFLAG_SERVER, "Price - Grenade ammo")
+MACRO_CONFIG_INT(EuGrenadeMine, eu_grenade_mine, 500, 0, 1000000, CFGFLAG_SERVER, "Price - Grenade ammo")// -.-
+
+MACRO_CONFIG_INT(EuShotgunSpread, eu_shotgun_spread, 180000, 0, 1000000, CFGFLAG_SERVER, "Price - Shotgun spread")
+MACRO_CONFIG_INT(EuShotgunExplode, eu_shotgun_explode, 360000, 0, 1000000, CFGFLAG_SERVER, "Price - Shotgun explode")
+MACRO_CONFIG_INT(EuShotgunStars, eu_shotgun_stars, 500, 0, 1000000, CFGFLAG_SERVER, "Price - Shotgun ammo")// -.-
+
+MACRO_CONFIG_INT(EuRifleSpread, eu_rifle_spread, 180000, 0, 1000000, CFGFLAG_SERVER, "Price - Rifle spread")
+MACRO_CONFIG_INT(EuRifleSwap, eu_rifle_swap, 9000, 0, 1000000, CFGFLAG_SERVER, "Price - Rifle swap")
+MACRO_CONFIG_INT(EuRiflePlasma, eu_rifle_plasma, 72000, 0, 1000000, CFGFLAG_SERVER, "Price - Rifle plasma")
+
+MACRO_CONFIG_INT(EuGunSpread, eu_gun_spread, 180000, 0, 1000000, CFGFLAG_SERVER, "Price - Gun spread")
+MACRO_CONFIG_INT(EuGunExplode, eu_gun_explode, 360000, 0, 1000000, CFGFLAG_SERVER, "Price - Gun explode")
+MACRO_CONFIG_INT(EuGunFreeze, eu_gun_freeze, 720000, 0, 1000000, CFGFLAG_SERVER, "Price - Gun ammo")
+
+MACRO_CONFIG_INT(EuHammerWalls, eu_hammer_walls, 72000, 0, 1000000, CFGFLAG_SERVER, "Price - Hammer walls")
+MACRO_CONFIG_INT(EuHammerShot, eu_hammer_shot, 720000, 0, 1000000, CFGFLAG_SERVER, "Price - Hammer shot")
+MACRO_CONFIG_INT(EuHammerKill, eu_hammer_kill, 36000, 0, 1000000, CFGFLAG_SERVER, "Price - Hammer kill")
+
+MACRO_CONFIG_INT(EuNinjaPermanent, eu_ninja_permanent, 180000, 0, 1000000, CFGFLAG_SERVER, "Price - Ninja permanent")
+MACRO_CONFIG_INT(EuNinjaStart, eu_ninja_start, 72000, 0, 1000000, CFGFLAG_SERVER, "Price - Ninja start")
+MACRO_CONFIG_INT(EuNinjaSwitch, eu_ninja_switch, 9000, 0, 1000000, CFGFLAG_SERVER, "Price - Ninja switch")
+
+MACRO_CONFIG_STR(SvBroadcast, sv_broadcast, 128, "", CFGFLAG_SERVER, "Broadcast message")
+
+MACRO_CONFIG_INT(EnableInstagib, sv_enable_instagib, 0, 0, 1, CFGFLAG_SERVER, "Enable/Disable Instagib")
+
 
 // client
 MACRO_CONFIG_INT(ClPredict, cl_predict, 1, 0, 1, CFGFLAG_CLIENT|CFGFLAG_SAVE, "Predict client movements")

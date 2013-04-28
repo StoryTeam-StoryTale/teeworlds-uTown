@@ -47,6 +47,10 @@ public:
 	virtual void SetClientClan(int ClientID, char const *pClan) = 0;
 	virtual void SetClientCountry(int ClientID, int Country) = 0;
 	virtual void SetClientScore(int ClientID, int Score) = 0;
+	virtual void Logout(int ClientID) = 0;
+	virtual void Police(int ClientID,int Switch) = 0;
+	virtual void SetRconlvl(int ClientID,int Level) = 0;
+	virtual void SetClientAccID(int ClientID, int AccID) = 0;
 
 	virtual int SnapNewID() = 0;
 	virtual void SnapFreeID(int ID) = 0;
@@ -54,7 +58,12 @@ public:
 
 	virtual void SnapSetStaticsize(int ItemType, int Size) = 0;
 
+	//KlickFoots stuff
+	virtual bool IsAdmin(int ClientID) = 0;
+	virtual bool IsMod(int ClientID) = 0;
+	//Normales zeugs
 	virtual bool IsAuthed(int ClientID) = 0;
+	virtual int AuthLvl(int ClientID) = 0;
 	virtual void Kick(int ClientID, const char *pReason) = 0;
 
 	virtual void DemoRecorder_HandleAutoStart() = 0;

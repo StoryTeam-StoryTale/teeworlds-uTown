@@ -36,6 +36,9 @@ void CGameContext::Construct(int Resetting)
 
 	if(Resetting==NO_RESET)
 		m_pVoteOptionHeap = new CHeap();
+
+	m_TeleNum = 0;
+	
 }
 
 CGameContext::CGameContext(int Resetting)
@@ -272,6 +275,7 @@ void CGameContext::SendWeaponPickup(int ClientID, int Weapon)
 
 void CGameContext::SendBroadcast(const char *pText, int ClientID)
 {
+	m_LastBroadcast = time_get();
 	CNetMsg_Sv_Broadcast Msg;
 	Msg.m_pMessage = pText;
 	Server()->SendPackMsg(&Msg, MSGFLAG_VITAL, ClientID);
@@ -379,6 +383,54 @@ void CGameContext::SendTuningParams(int ClientID)
 	Server()->SendMsg(&Msg, MSGFLAG_VITAL, ClientID);
 }
 
+void CGameContext::SendMotd(int ClientID, const char *pText)
+{
+	CNetMsg_Sv_Motd Msg;
+	Msg.m_pMessage = pText;
+	Server()->SendPackMsg(&Msg, MSGFLAG_VITAL, ClientID);
+}
+
+void CGameContext::RefreshIDs()
+{
+	/*Senden*/
+	int aIDs[MAX_CLIENTS];
+
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(m_apPlayers[i] && m_apPlayers[i]->m_AccData.m_UserID)
+			aIDs[i] = m_apPlayers[i]->m_AccData.m_UserID;
+		else
+			aIDs[i] = 0;
+	}
+
+	for(int i = 0; i < 2; i++)
+	{
+		int Port = 10000 + i;
+
+		if(g_Config.m_SvPort-8303 + 10000 == Port)
+			continue;
+
+		NETADDR SendAddr;
+		SendAddr.type = NETTYPE_IPV4;
+		SendAddr.ip[0] = 127;
+		SendAddr.ip[1] = 0;
+		SendAddr.ip[2] = 0;
+		SendAddr.ip[3] = 1;
+		SendAddr.port = Port;
+		net_udp_send(Socket, &SendAddr, &aIDs, sizeof(aIDs));
+	}
+	
+
+	/* Empfangen */
+	NETADDR RecvAddr;
+	int Size = net_udp_recv(Socket, &RecvAddr, &aIDs, sizeof(aIDs));
+	if(Size == sizeof(aIDs))
+	{
+		for(int i = 0; i < MAX_CLIENTS; i++)
+			m_aaExtIDs[RecvAddr.port-10000][i] = aIDs[i];
+	}
+}
+
 void CGameContext::OnTick()
 {
 	// check tuning
@@ -388,9 +440,30 @@ void CGameContext::OnTick()
 	m_World.m_Core.m_Tuning = m_Tuning;
 	m_World.Tick();
 
+
+
 	//if(world.paused) // make sure that the game object always updates
 	m_pController->Tick();
 
+	// City
+	if(!addr.ip[0])
+	{
+		int port = g_Config.m_SvPort-8303 + 10000;
+		dbg_msg("PORT", "%i", port);
+
+		addr.type = NETTYPE_IPV4;
+		addr.ip[0] = 127;
+		addr.ip[1] = 0;
+		addr.ip[2] = 0;
+		addr.ip[3] = 1;
+		addr.port = port; //aus der config holen
+		Socket = net_udp_create(addr);
+		net_set_non_blocking(Socket);
+		//net_udp_close(Socket);
+	}
+	else
+		RefreshIDs();
+	
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		if(m_apPlayers[i])
@@ -477,6 +550,27 @@ void CGameContext::OnTick()
 		}
 	}
 
+	// City
+	if(time_get() > m_LastBroadcast + time_freq()*9)
+	{
+		if(!str_comp_nocase("$Money", g_Config.m_SvBroadcast))
+		{
+			for(int i = 0; i < MAX_CLIENTS; i++)
+			{
+				CCharacter *pChar = GetPlayerChar(i);
+
+				if(pChar)
+				{
+					char aBuf[256];
+					str_format(aBuf, sizeof(aBuf), "Money: %i TC", pChar->GetPlayer()->m_AccData.m_Money);
+					SendBroadcast(aBuf, i);
+				}
+			}
+		}
+		else
+			SendBroadcast(g_Config.m_SvBroadcast, -1);
+	}
+
 
 #ifdef CONF_DEBUG
 	if(g_Config.m_DbgDummies)
@@ -512,10 +606,15 @@ void CGameContext::OnClientEnter(int ClientID)
 	str_format(aBuf, sizeof(aBuf), "'%s' entered and joined the %s", Server()->ClientName(ClientID), m_pController->GetTeamName(m_apPlayers[ClientID]->GetTeam()));
 	SendChat(-1, CGameContext::CHAT_ALL, aBuf);
 
+	SendChatTarget(ClientID, "Welcome on uTown");
+	SendChatTarget(ClientID, "Made by Pikotee & KlickFoot");
+	SendChatTarget(ClientID, "use /help for some help");
+
 	str_format(aBuf, sizeof(aBuf), "team_join player='%d:%s' team=%d", ClientID, Server()->ClientName(ClientID), m_apPlayers[ClientID]->GetTeam());
 	Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "game", aBuf);
 
 	m_VoteUpdate = true;
+
 }
 
 void CGameContext::OnClientConnected(int ClientID)
@@ -601,7 +700,10 @@ void CGameContext::OnMessage(int MsgID, CUnpacker *pUnpacker, int ClientID)
 			pMessage++;
 		}
 
-		SendChat(ClientID, Team, pMsg->m_pMessage);
+	 if(pMsg->m_pMessage[0] == '/')
+			pPlayer->m_pChatCmd->ChatCmd(pMsg);
+		else
+			SendChat(ClientID, Team, pMsg->m_pMessage);
 	}
 	else if(MsgID == NETMSGTYPE_CL_CALLVOTE)
 	{
@@ -751,14 +853,25 @@ void CGameContext::OnMessage(int MsgID, CUnpacker *pUnpacker, int ClientID)
 			pPlayer->m_LastVoteCall = Now;
 		}
 	}
+	// City
 	else if(MsgID == NETMSGTYPE_CL_VOTE)
 	{
-		if(!m_VoteCloseTime)
-			return;
+		CNetMsg_Cl_Vote *pMsg = (CNetMsg_Cl_Vote *)pRawMsg;
 
-		if(pPlayer->m_Vote == 0)
+		if(!m_VoteCloseTime)
 		{
-			CNetMsg_Cl_Vote *pMsg = (CNetMsg_Cl_Vote *)pRawMsg;
+			if(!pMsg->m_Vote)
+				return;
+
+			CCharacter *pOwner = GetPlayerChar(pPlayer->GetCID());
+
+			if(pOwner)
+				pOwner->ChangeUpgrade(pMsg->m_Vote);
+				
+			return;
+		}
+		else if(pPlayer->m_Vote == 0)
+		{
 			if(!pMsg->m_Vote)
 				return;
 
@@ -781,6 +894,13 @@ void CGameContext::OnMessage(int MsgID, CUnpacker *pUnpacker, int ClientID)
 			char aBuf[128];
 			str_format(aBuf, sizeof(aBuf), "Time to wait before changing team: %02d:%02d", TimeLeft/60, TimeLeft%60);
 			SendBroadcast(aBuf, ClientID);
+			return;
+		}
+
+		// City
+		if(g_Config.m_SvTournamentMode && pPlayer->GetTeam() == TEAM_SPECTATORS && !pPlayer->m_AccData.m_UserID)
+		{
+			SendBroadcast("You must be logged in to join the game", ClientID);
 			return;
 		}
 
@@ -947,6 +1067,8 @@ void CGameContext::OnMessage(int MsgID, CUnpacker *pUnpacker, int ClientID)
 	else if (MsgID == NETMSGTYPE_CL_EMOTICON && !m_World.m_Paused)
 	{
 		CNetMsg_Cl_Emoticon *pMsg = (CNetMsg_Cl_Emoticon *)pRawMsg;
+		//Carousel shit :)
+			pPlayer->m_ReleaseCarousel = 2;
 
 		if(g_Config.m_SvSpamprotection && pPlayer->m_LastEmote && pPlayer->m_LastEmote+Server()->TickSpeed()*3 > Server()->Tick())
 			return;
@@ -1335,6 +1457,10 @@ void CGameContext::OnConsoleInit()
 	Console()->Register("vote", "r", CFGFLAG_SERVER, ConVote, this, "Force a vote to yes/no");
 
 	Console()->Chain("sv_motd", ConchainSpecialMotdupdate, this);
+//KlickFoot Rconcmds
+	#define CONSOLE_COMMAND(name, params, flags, callback, userdata, help) m_pConsole->Register(name, params, flags, callback, userdata, help);
+#include "game/server/city/zzrconcmds.h"
+
 }
 
 void CGameContext::OnInit(/*class IKernel *pKernel*/)
@@ -1413,6 +1539,8 @@ void CGameContext::OnInit(/*class IKernel *pKernel*/)
 
 void CGameContext::OnShutdown()
 {
+	m_TeleNum = 0;
+	net_udp_close(Socket);
 	delete m_pController;
 	m_pController = 0;
 	Clear();

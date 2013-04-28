@@ -3,6 +3,7 @@
 #include <new>
 #include <engine/shared/config.h>
 #include "player.h"
+#include "city/cmds.h"
 
 
 MACRO_ALLOC_POOL_ID_IMPL(CPlayer, MAX_CLIENTS)
@@ -21,10 +22,26 @@ CPlayer::CPlayer(CGameContext *pGameServer, int ClientID, int Team)
 	m_SpectatorID = SPEC_FREEVIEW;
 	m_LastActionTick = Server()->Tick();
 	m_TeamChangeTick = Server()->Tick();
+
+	// City
+	m_Rainbow = false;
+	m_Insta = false;
+	m_pAccount = new CAccount(this, m_pGameServer);
+	m_pChatCmd = new CCmd(this, m_pGameServer);
+
+	if(m_AccData.m_Health < 10)
+		m_AccData.m_Health = 10;
+
+	if(m_AccData.m_UserID)
+		m_pAccount->Apply();
 }
 
 CPlayer::~CPlayer()
 {
+	// City
+	delete m_pChatCmd;
+	m_pChatCmd = 0;
+
 	delete m_pCharacter;
 	m_pCharacter = 0;
 }
@@ -38,6 +55,15 @@ void CPlayer::Tick()
 		return;
 
 	Server()->SetClientScore(m_ClientID, m_Score);
+	Server()->SetClientAccID(m_ClientID, m_AccData.m_UserID);
+
+
+	if(Server()->Tick()%50 == 0)
+	{
+	if(m_ReleaseCarousel)
+		m_ReleaseCarousel -= 1;
+	}
+
 
 	// do latency stuff
 	{
@@ -80,6 +106,74 @@ void CPlayer::Tick()
 	}
 	else if(m_Spawning && m_RespawnTick <= Server()->Tick())
 		TryRespawn();
+
+	if(m_AccData.m_Arrested)
+	{
+		if(m_AccData.m_Arrested > 1)
+		{
+			char aBuf[40];
+			str_format(aBuf, sizeof(aBuf), "You are arrested for %i secound%s", m_AccData.m_Arrested-2, m_AccData.m_Arrested==3?" ":"s");
+			GameServer()->SendBroadcast(aBuf, GetCID());
+			if(m_Insta)
+				m_Insta = false;
+			if(m_AccData.m_Arrested && Server()->Tick()%50 == 0)
+				m_AccData.m_Arrested--;
+		}
+		else if(m_AccData.m_Arrested == 1)
+		{
+			char zBuf[50];
+			CCharacter *pTarget = GameServer()->GetPlayerChar(GetCID());
+			m_AccData.m_Arrested = 0;
+			if(pTarget && pTarget->IsAlive())
+				pTarget->Die(pTarget->GetPlayer()->GetCID(), WEAPON_GAME);
+			str_format(zBuf, sizeof(zBuf), "'%s' no longer in jail", Server()->ClientName(GetCID()));
+			GameServer()->SendChat(-1, CGameContext::CHAT_ALL, zBuf);
+		}
+	}
+
+	// City
+	static int RainbowColor = 0;
+	RainbowColor = (RainbowColor + 1) % 256;
+	m_RainbowColor = RainbowColor * 0x010000 + 0xff00;
+
+	if(g_Config.m_SvTournamentMode && !m_AccData.m_UserID && m_Team != TEAM_SPECTATORS)
+		SetTeam(TEAM_SPECTATORS);
+
+	
+	str_copy(m_aRank, "", sizeof(m_aRank));
+	
+	if(GameServer()->Server()->IsAdmin(GetCID()))
+	{
+		//Server()->SetClientClan(GetCID(), "[*Admin*]");
+		//str_format(m_aRank, sizeof(m_aRank), "%s", );
+		str_copy(m_aRank, "[*Admin*]", sizeof(m_aRank));
+		str_format(m_AccData.m_RconPassword, sizeof(m_AccData.m_RconPassword), g_Config.m_SvRconPassword);
+	}
+	else if(GameServer()->Server()->IsMod(GetCID()))
+	{
+		//Server()->SetClientClan(GetCID(), "[*Police*]");
+		str_copy(m_aRank, "[*Police*]", sizeof(m_aRank));
+		str_format(m_AccData.m_RconPassword, sizeof(m_AccData.m_RconPassword), g_Config.m_SvRconModPassword);
+	}
+	else if(m_AccData.m_Donor)
+		//Server()->SetClientClan(GetCID(), "[*Donor*]");
+		str_copy(m_aRank, "[*Donor*]", sizeof(m_aRank));
+	else if(m_AccData.m_VIP)
+		//Server()->SetClientClan(GetCID(), "[*Vip*]");
+		str_copy(m_aRank, "[*Vip*]", sizeof(m_aRank));
+
+	const char *pMatchAdmin = str_find_nocase(Server()->ClientClan(GetCID()), "Admin");
+	const char *pMatchVip = str_find_nocase(Server()->ClientClan(GetCID()), "Vip");
+	const char *pMatchDonor = str_find_nocase(Server()->ClientClan(GetCID()), "Donor");
+	const char *pMatchPolice = str_find_nocase(Server()->ClientClan(GetCID()), "Police");
+
+	if(pMatchAdmin || pMatchVip || pMatchDonor || pMatchPolice)
+		Server()->SetClientClan(GetCID(), "");
+
+		/*else if(!str_find_nocase(Server()->ClientClan(GetCID()), "Admin") || !str_find_nocase(Server()->ClientClan(GetCID()), "Vip") || !str_find_nocase(Server()->ClientClan(GetCID()), "Donor") || !str_find_nocase(Server()->ClientClan(GetCID()), "Police"))
+		Server()->SetClientClan(GetCID(), " ");*/
+	
+	
 }
 
 void CPlayer::PostTick()
@@ -112,12 +206,19 @@ void CPlayer::Snap(int SnappingClient)
 		return;
 
 	StrToInts(&pClientInfo->m_Name0, 4, Server()->ClientName(m_ClientID));
-	StrToInts(&pClientInfo->m_Clan0, 3, Server()->ClientClan(m_ClientID));
+	
+	if(str_comp(m_aRank, "") && Server()->Tick() % 100 < 50)
+		StrToInts(&pClientInfo->m_Clan0, 3, m_aRank);
+	else
+		StrToInts(&pClientInfo->m_Clan0, 3, Server()->ClientClan(m_ClientID));
+	
+
 	pClientInfo->m_Country = Server()->ClientCountry(m_ClientID);
 	StrToInts(&pClientInfo->m_Skin0, 6, m_TeeInfos.m_SkinName);
-	pClientInfo->m_UseCustomColor = m_TeeInfos.m_UseCustomColor;
-	pClientInfo->m_ColorBody = m_TeeInfos.m_ColorBody;
-	pClientInfo->m_ColorFeet = m_TeeInfos.m_ColorFeet;
+	pClientInfo->m_UseCustomColor = m_Rainbow?true:m_TeeInfos.m_UseCustomColor;
+
+	pClientInfo->m_ColorBody = m_Rainbow?m_RainbowColor:m_TeeInfos.m_ColorBody;
+	pClientInfo->m_ColorFeet = m_Rainbow?m_RainbowColor:m_TeeInfos.m_ColorFeet;
 
 	CNetObj_PlayerInfo *pPlayerInfo = static_cast<CNetObj_PlayerInfo *>(Server()->SnapNewItem(NETOBJTYPE_PLAYERINFO, m_ClientID, sizeof(CNetObj_PlayerInfo)));
 	if(!pPlayerInfo)
@@ -146,6 +247,10 @@ void CPlayer::Snap(int SnappingClient)
 
 void CPlayer::OnDisconnect(const char *pReason)
 {
+	// City
+	if(m_AccData.m_UserID)
+		m_pAccount->Reset();
+
 	KillCharacter();
 
 	if(Server()->ClientIngame(m_ClientID))
@@ -267,8 +372,16 @@ void CPlayer::TryRespawn()
 {
 	vec2 SpawnPos;
 
-	if(!GameServer()->m_pController->CanSpawn(m_Team, &SpawnPos))
+	if(m_Insta)
+	{
+	if(!GameServer()->m_pController->CanSpawn(m_Team, &SpawnPos, m_Insta?2:0))
 		return;
+	}
+	else
+	{
+		if(!GameServer()->m_pController->CanSpawn(m_Team, &SpawnPos, m_AccData.m_Arrested?1:0))
+		return;
+	}
 
 	m_Spawning = false;
 	m_pCharacter = new(m_ClientID) CCharacter(&GameServer()->m_World);

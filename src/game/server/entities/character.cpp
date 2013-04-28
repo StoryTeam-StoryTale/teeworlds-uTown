@@ -8,6 +8,13 @@
 #include "character.h"
 #include "laser.h"
 #include "projectile.h"
+#include "game/server/city/plasma.h"
+#include "game/server/city/hammerkill.h"
+#include "game/server/city/wall.h"
+#include "game/server/city/gui.h"
+#include "game/server/city/crown.h"
+#include "game/server/city/transfer.h"
+#include "game/server/city/entities/spawnprotect.h"
 
 //input count
 struct CInputCount
@@ -56,7 +63,11 @@ bool CCharacter::Spawn(CPlayer *pPlayer, vec2 Pos)
 {
 	m_EmoteStop = -1;
 	m_LastAction = -1;
-	m_ActiveWeapon = WEAPON_GUN;
+	m_ActiveWeapon = pPlayer->m_Insta?WEAPON_RIFLE:WEAPON_GUN;
+
+	if(pPlayer->m_Insta)
+		m_aWeapons[WEAPON_RIFLE].m_Ammo = 10;
+
 	m_LastWeapon = WEAPON_HAMMER;
 	m_QueuedWeapon = -1;
 
@@ -75,7 +86,37 @@ bool CCharacter::Spawn(CPlayer *pPlayer, vec2 Pos)
 	GameServer()->m_World.InsertEntity(this);
 	m_Alive = true;
 
+	// City
+	if(!m_pPlayer->m_Insta)
+	{
+		m_Protected = true;
+		m_Core.m_Protected = true;
+	}
+
+	m_InstaKills = 0;
+	m_God = false;
+	m_Walls = 0;
+	m_Plasma = 0;
+	m_FreezeEnd = false;
+	m_HammerPos1 = vec2(0, 0);
+	m_HammerPos2 = vec2(0, 0);
+	m_SpawnProtection = Server()->Tick();
+
+	new CGui(GameWorld(), m_pPlayer->GetCID());
+	new CCrown(GameWorld(), m_pPlayer->GetCID());
+
+	if(!m_pPlayer->m_Insta)
+		new CSpawProtect(GameWorld(), m_pPlayer->GetCID());
+
+	m_GameZone = false;
+	m_IsHammerKilled = false;
+
+	GameServer()->m_TeleNR[m_pPlayer->GetCID()] = 0;
+	m_Home = 0;
+
 	GameServer()->m_pController->OnCharacterSpawn(this);
+
+	
 
 	return true;
 }
@@ -88,7 +129,7 @@ void CCharacter::Destroy()
 
 void CCharacter::SetWeapon(int W)
 {
-	if(W == m_ActiveWeapon)
+	if(W == m_ActiveWeapon || (m_pPlayer->m_Insta && m_ActiveWeapon == WEAPON_RIFLE))
 		return;
 
 	m_LastWeapon = m_ActiveWeapon;
@@ -110,20 +151,153 @@ bool CCharacter::IsGrounded()
 }
 
 
+// City
+void CCharacter::Tele()
+{
+	vec2 TelePos = m_Pos + vec2(m_Input.m_TargetX,m_Input.m_TargetY);
+	if(!GameServer()->Collision()->CheckPoint(TelePos))
+	{
+		float Dist = distance(TelePos, m_Pos);
+		for(int i = 1; i < Dist; i+=32)
+		{
+			vec2 TestPos = m_Pos + normalize(TelePos - m_Pos) * i;
+
+			if(GameServer()->Collision()->IsTile(TestPos, TILE_ANTI_TELE)
+				|| GameServer()->Collision()->IsTile(TestPos, TILE_VIP)
+				|| GameServer()->Collision()->IsTile(TestPos, TILE_POLICE)
+				|| GameServer()->Collision()->IsTile(TestPos, TILE_ADMIN)
+				|| GameServer()->Collision()->IsTile(TestPos, TILE_DONOR))
+			{
+				GameServer()->SendChatTarget(m_pPlayer->GetCID(), "[Antitele]: /Tele denied"); 
+				return;
+			}
+		}
+
+		if(Protected())
+		{
+			GameServer()->SendChatTarget(m_pPlayer->GetCID(), "[Antitele]: Disable Protection first"); 
+			return;
+		}
+
+		m_Core.m_Pos = TelePos;
+	}
+}
+
+void CCharacter::SaveLoad(int Value)
+{
+	if(!Value)
+	{
+		if(!GameServer()->Collision()->CheckPoint(m_Pos))
+			m_SavePos = m_Pos;
+	}
+	else if(m_SavePos == vec2(0,0))
+	{
+		GameServer()->SendChatTarget(m_pPlayer->GetCID(), "[Load]: Set a position first"); 
+		return;
+	}
+	
+	if(!Protected())
+		m_Core.m_Pos = m_SavePos;
+}
+
+void CCharacter::Buy(const char *Name, int *Upgrade, int Price, int Click, int Max)
+{
+	char aBuf[128];
+	
+	if(Click == 1)
+	{
+		if(*Upgrade < Max)
+		{
+			if(m_pPlayer->m_AccData.m_Money >= Price)
+			{
+				if(Server()->Tick() - m_BuyTick > 50)
+				{
+					*Upgrade += 1;
+					m_pPlayer->m_AccData.m_Money-=Price;
+					str_format(aBuf, sizeof(aBuf), "%s (%d/%d)", Name, *Upgrade, Max);
+					m_LastBroadcast = Server()->Tick();
+
+					if(m_pPlayer->m_AccData.m_UserID)
+						m_pPlayer->m_pAccount->Apply();
+
+					m_BuyTick = Server()->Tick();
+					GameServer()->SendChatTarget(m_pPlayer->GetCID(), aBuf);
+					str_format(aBuf, sizeof(aBuf), "Money: %d TC", m_pPlayer->m_AccData.m_Money);
+					GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+				}
+			}
+			else
+			{
+				str_format(aBuf, sizeof(aBuf), "Not enough money\n%s: %d TC\nMoney: %d TC", Name, Price, m_pPlayer->m_AccData.m_Money);
+				m_LastBroadcast = Server()->Tick();
+				GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+			}
+		}
+		else
+		{
+			str_format(aBuf, sizeof(aBuf), "Maximum '%s' (%d/%d)", Name, *Upgrade, Max);
+			m_LastBroadcast = Server()->Tick();
+			GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+		}
+	}
+	else if(Click == 2)
+	{
+		if(Server()->Tick()-m_LastBroadcast>50)
+		{
+			m_LastBroadcast = Server()->Tick();
+			str_format(aBuf, sizeof(aBuf), "%s (%d/%d)\nP: %d TC\nMoney: %d TC", Name, *Upgrade, Max, Price, m_pPlayer->m_AccData.m_Money);
+			GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+		}
+	}
+}
+
+int CCharacter::ActiveWeapon()
+{
+	return m_ActiveWeapon;
+}
+int CCharacter::MouseEvent(vec2 Pos)
+{
+	if(distance(Pos, m_Pos+vec2(m_LatestInput.m_TargetX, m_LatestInput.m_TargetY)) < 64)
+	{
+		if(m_Input.m_Hook)
+		{
+			m_Input.m_Hook = 0;
+			return 1;
+		}
+
+		if((m_Input.m_Fire&1) != 0)
+			return -1;
+
+		return 2;
+	}
+	
+	//m_LastBroadcast = 0;
+
+	return 0;
+}
+
 void CCharacter::HandleNinja()
 {
 	if(m_ActiveWeapon != WEAPON_NINJA)
 		return;
 
-	if ((Server()->Tick() - m_Ninja.m_ActivationTick) > (g_pData->m_Weapons.m_Ninja.m_Duration * Server()->TickSpeed() / 1000))
+	if(m_Water || m_SingleWater)
+		return;
+
+	// City
+	if(!m_pPlayer->m_AccData.m_NinjaPermanent && (Server()->Tick() - m_Ninja.m_ActivationTick) > (g_pData->m_Weapons.m_Ninja.m_Duration * Server()->TickSpeed() / 1000) && !m_Frozen)
 	{
 		// time's up, return
 		m_aWeapons[WEAPON_NINJA].m_Got = false;
-		m_ActiveWeapon = m_LastWeapon;
+
+		m_ActiveWeapon = m_FreezeEnd?m_FreezeWeapon:m_LastWeapon;
 
 		SetWeapon(m_ActiveWeapon);
 		return;
 	}
+
+	if(m_Frozen)
+		return;
 
 	// force ninja Weapon
 	SetWeapon(WEAPON_NINJA);
@@ -192,8 +366,9 @@ void CCharacter::HandleNinja()
 
 void CCharacter::DoWeaponSwitch()
 {
+	// City
 	// make sure we can switch
-	if(m_ReloadTimer != 0 || m_QueuedWeapon == -1 || m_aWeapons[WEAPON_NINJA].m_Got)
+	if(m_ReloadTimer != 0 || m_QueuedWeapon == -1 || (m_aWeapons[WEAPON_NINJA].m_Got && !m_pPlayer->m_AccData.m_NinjaSwitch) || m_Frozen)
 		return;
 
 	// switch Weapon
@@ -241,6 +416,94 @@ void CCharacter::HandleWeaponSwitch()
 	DoWeaponSwitch();
 }
 
+void CCharacter::ChangeUpgrade(int Value)
+{
+	// m_pPlayer->m_AccData.m_HammerWalls > m_Walls && m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] == 1
+	
+	if(GameServer()->Collision()->TileShop(m_Pos))
+	{
+		m_Menu += Value;
+
+		if(m_Menu < 0) 
+			m_Menu = 0;
+		if(m_Menu > 7)
+			m_Menu = 7;
+
+		return;
+	}
+
+	m_pPlayer->m_AciveUpgrade[m_ActiveWeapon]+=Value;
+
+	switch(m_ActiveWeapon)
+	{
+		case WEAPON_HAMMER:
+		{
+			if(m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] > 2)
+				m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] = 0;
+			else if(m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] < 0)
+			{
+				m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] = 3;
+				ChangeUpgrade(Value);
+				return;
+			}
+			else if(m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] == 1)
+			{
+				if(!m_pPlayer->m_AccData.m_HammerWalls)
+				{
+					ChangeUpgrade(Value);
+					return;
+				}
+			}
+			else if(m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] == 2)
+			{
+				if(!m_pPlayer->m_AccData.m_HammerShot)
+				{
+					ChangeUpgrade(Value);
+					return;
+				}
+			}
+		} break;
+
+		case WEAPON_GUN:
+		{
+			
+		} break;
+
+		case WEAPON_SHOTGUN:
+		{
+			
+		} break;
+
+		case WEAPON_RIFLE:
+		{
+			if(m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] > 1)
+				m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] = 0;
+			else if(m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] < 0)
+			{
+				m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] = 2;
+				ChangeUpgrade(Value);
+				return;
+			}
+			else if(m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] == 1)
+			{
+				if(!m_pPlayer->m_AccData.m_RiflePlasma)
+				{
+					ChangeUpgrade(Value);
+					return;
+				}
+			}
+		} break;
+
+		case WEAPON_NINJA:
+		{
+			
+		} break;
+
+	}
+
+
+}
+
 void CCharacter::FireWeapon()
 {
 	if(m_ReloadTimer != 0)
@@ -249,10 +512,21 @@ void CCharacter::FireWeapon()
 	DoWeaponSwitch();
 	vec2 Direction = normalize(vec2(m_LatestInput.m_TargetX, m_LatestInput.m_TargetY));
 
+	// City
+	if(!Direction.x && !Direction.y)
+		return;
+
 	bool FullAuto = false;
+	
+	// City
 	if(m_ActiveWeapon == WEAPON_GRENADE || m_ActiveWeapon == WEAPON_SHOTGUN || m_ActiveWeapon == WEAPON_RIFLE)
 		FullAuto = true;
+	
+	if(m_pPlayer->m_AciveUpgrade[m_ActiveWeapon])
+		FullAuto = false;
 
+	if(m_pPlayer->m_AccData.m_FastReload && !m_GameZone)
+		FullAuto = true;
 
 	// check if we gonna fire
 	bool WillFire = false;
@@ -276,6 +550,10 @@ void CCharacter::FireWeapon()
 
 	vec2 ProjStartPos = m_Pos+Direction*m_ProximityRadius*0.75f;
 
+	// City
+	if(m_Protected && m_ActiveWeapon != WEAPON_NINJA && m_ActiveWeapon != WEAPON_RIFLE && !m_GameZone)
+		return;
+
 	switch(m_ActiveWeapon)
 	{
 		case WEAPON_HAMMER:
@@ -293,7 +571,7 @@ void CCharacter::FireWeapon()
 			{
 				CCharacter *pTarget = apEnts[i];
 
-				if ((pTarget == this) || GameServer()->Collision()->IntersectLine(ProjStartPos, pTarget->m_Pos, NULL, NULL))
+				if ((pTarget == this) || GameServer()->Collision()->IntersectLine(ProjStartPos, pTarget->m_Pos, NULL, NULL) || pTarget->GetPlayer()->m_Insta)
 					continue;
 
 				// set his velocity to fast upward (for now)
@@ -311,31 +589,115 @@ void CCharacter::FireWeapon()
 				pTarget->TakeDamage(vec2(0.f, -1.f) + normalize(Dir + vec2(0.f, -1.1f)) * 10.0f, g_pData->m_Weapons.m_Hammer.m_pBase->m_Damage,
 					m_pPlayer->GetCID(), m_ActiveWeapon);
 				Hits++;
-			}
 
+				if(m_pPlayer->m_AccData.m_HammerKill && !pTarget->Protected() && !pTarget->m_God && !m_GameZone && !pTarget->m_IsHammerKilled)
+				{
+					new CHammerKill(GameWorld(), m_pPlayer->GetCID(), pTarget->GetPlayer()->GetCID());
+					pTarget->m_IsHammerKilled = true;
+				}
+
+				if(pTarget->m_GameZone && m_GameZone && pTarget->m_Frozen)
+					pTarget->Unfreeze();
+
+			}
+			
 			// if we Hit anything, we have to wait for the reload
 			if(Hits)
 				m_ReloadTimer = Server()->TickSpeed()/3;
+			else if(m_pPlayer->m_AccData.m_HammerShot && m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] == 2 && !m_GameZone)
+			{
+				NewPlasma();
+				m_ReloadTimer = Server()->TickSpeed()/3;
+			}
+
+			if(m_pPlayer->m_AccData.m_HammerWalls > m_Walls && m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] == 1 && !Hits && !m_GameZone)
+			{
+				m_ReloadTimer = Server()->TickSpeed()/3;
+
+				if(!m_HammerPos1.x && !m_HammerPos1.y)
+					m_HammerPos1 = m_Pos;
+				else
+				{
+					//vec2 Pos2 = m_Pos+vec2(m_LatestInput.m_TargetX, m_LatestInput.m_TargetY);
+					if(m_HammerPos1.x != m_Pos.x || m_HammerPos1.y != m_Pos.y)
+					{
+	
+						if(!GameServer()->Collision()->IntersectLine(m_HammerPos1, m_Pos, &m_HammerPos2, NULL))
+							m_HammerPos2 = m_Pos;
+
+						if(distance(m_HammerPos1, m_HammerPos2) > 1000)
+							m_HammerPos2 = m_HammerPos1 + normalize(m_HammerPos2 - m_HammerPos1)*1000;
+
+						new CWall(GameWorld(), m_HammerPos1, m_HammerPos2, m_pPlayer->GetCID());
+						m_Walls++;
+					}
+
+					m_HammerPos1 = vec2(0, 0);
+					m_HammerPos2 = vec2(0, 0);
+				}
+			}
 
 		} break;
 
 		case WEAPON_GUN:
 		{
-			CProjectile *pProj = new CProjectile(GameWorld(), WEAPON_GUN,
+			CMsgPacker Msg(NETMSGTYPE_SV_EXTRAPROJECTILE);
+
+			if(!m_pPlayer->m_AccData.m_GunSpread || m_GameZone)
+			{
+				CProjectile *pProj = new CProjectile(GameWorld(), WEAPON_GUN,
 				m_pPlayer->GetCID(),
 				ProjStartPos,
 				Direction,
 				(int)(Server()->TickSpeed()*GameServer()->Tuning()->m_GunLifetime),
-				1, 0, 0, -1, WEAPON_GUN);
+				1, m_GameZone?0:m_pPlayer->m_AccData.m_GunExplode, 0, -1, WEAPON_GUN);
 
 			// pack the Projectile and send it to the client Directly
 			CNetObj_Projectile p;
 			pProj->FillInfo(&p);
 
-			CMsgPacker Msg(NETMSGTYPE_SV_EXTRAPROJECTILE);
+			
 			Msg.AddInt(1);
 			for(unsigned i = 0; i < sizeof(CNetObj_Projectile)/sizeof(int); i++)
 				Msg.AddInt(((int *)&p)[i]);
+
+			}
+			else
+			{
+				int ShotSpread = m_pPlayer->m_AccData.m_GunSpread;
+
+				//CMsgPacker Msg(NETMSGTYPE_SV_EXTRAPROJECTILE);
+				Msg.AddInt(ShotSpread*2+1);
+
+				float Spreading[18*2+1];
+
+				for(int i = 0; i < 18*2+1; i++)
+				{
+					Spreading[i] = -1.260f + 0.070f * i;
+				}
+			
+				for(int i = -ShotSpread; i <= ShotSpread; ++i)
+				{
+					float a = GetAngle(Direction);
+					a += Spreading[i+18];
+					float v = 1-(absolute(i)/(float)ShotSpread);
+
+					float Speed = mix((float)GameServer()->Tuning()->m_ShotgunSpeeddiff, 1.0f, v);
+					CProjectile *pProj = new CProjectile(GameWorld(), WEAPON_GUN,
+						m_pPlayer->GetCID(),
+						ProjStartPos,
+						vec2(cosf(a), sinf(a))*Speed,
+						(int)(Server()->TickSpeed()*GameServer()->Tuning()->m_GunLifetime),
+						1, m_pPlayer->m_AccData.m_GunExplode, 0, -1, WEAPON_GUN);
+
+					// pack the Projectile and send it to the client DirectlyPikotee
+					CNetObj_Projectile p;
+					pProj->FillInfo(&p);
+
+					for(unsigned i = 0; i < sizeof(CNetObj_Projectile)/sizeof(int); i++)
+						Msg.AddInt(((int *)&p)[i]);
+				}
+			}
 
 			Server()->SendMsg(&Msg, 0, m_pPlayer->GetCID());
 
@@ -344,41 +706,59 @@ void CCharacter::FireWeapon()
 
 		case WEAPON_SHOTGUN:
 		{
-			int ShotSpread = 2;
-
-			CMsgPacker Msg(NETMSGTYPE_SV_EXTRAPROJECTILE);
-			Msg.AddInt(ShotSpread*2+1);
-
-			for(int i = -ShotSpread; i <= ShotSpread; ++i)
+			if(!m_GameZone)
 			{
-				float Spreading[] = {-0.185f, -0.070f, 0, 0.070f, 0.185f};
-				float a = GetAngle(Direction);
-				a += Spreading[i+2];
-				float v = 1-(absolute(i)/(float)ShotSpread);
-				float Speed = mix((float)GameServer()->Tuning()->m_ShotgunSpeeddiff, 1.0f, v);
-				CProjectile *pProj = new CProjectile(GameWorld(), WEAPON_SHOTGUN,
-					m_pPlayer->GetCID(),
-					ProjStartPos,
-					vec2(cosf(a), sinf(a))*Speed,
-					(int)(Server()->TickSpeed()*GameServer()->Tuning()->m_ShotgunLifetime),
-					1, 0, 0, -1, WEAPON_SHOTGUN);
+				int ShotSpread = 2+m_pPlayer->m_AccData.m_ShotgunSpread;
 
-				// pack the Projectile and send it to the client Directly
-				CNetObj_Projectile p;
-				pProj->FillInfo(&p);
+				if(m_GameZone)
+					ShotSpread = 2;
 
-				for(unsigned i = 0; i < sizeof(CNetObj_Projectile)/sizeof(int); i++)
-					Msg.AddInt(((int *)&p)[i]);
+				CMsgPacker Msg(NETMSGTYPE_SV_EXTRAPROJECTILE);
+				Msg.AddInt(ShotSpread*2+1);
+
+				float Spreading[18*2+1];
+
+				for(int i = 0; i < 18*2+1; i++)
+				{
+					Spreading[i] = -1.260f + 0.070f * i;
+				}
+			
+
+				for(int i = -ShotSpread; i <= ShotSpread; ++i)
+				{
+					float a = GetAngle(Direction);
+					a += Spreading[i+18];
+					float v = 1-(absolute(i)/(float)ShotSpread);
+					float Speed = mix((float)GameServer()->Tuning()->m_ShotgunSpeeddiff, 1.0f, v);
+					CProjectile *pProj = new CProjectile(GameWorld(), WEAPON_SHOTGUN,
+						m_pPlayer->GetCID(),
+						ProjStartPos,
+						vec2(cosf(a), sinf(a))*Speed,
+						(int)(Server()->TickSpeed()*GameServer()->Tuning()->m_ShotgunLifetime),
+						1, m_GameZone?0:m_pPlayer->m_AccData.m_ShotgunExplode, 0, -1, WEAPON_SHOTGUN);
+
+					// pack the Projectile and send it to the client DirectlyPikotee
+					CNetObj_Projectile p;
+					pProj->FillInfo(&p);
+
+					for(unsigned i = 0; i < sizeof(CNetObj_Projectile)/sizeof(int); i++)
+						Msg.AddInt(((int *)&p)[i]);
+				}
+
+				Server()->SendMsg(&Msg, 0,m_pPlayer->GetCID());
 			}
-
-			Server()->SendMsg(&Msg, 0,m_pPlayer->GetCID());
+			else
+				new CLaser(GameWorld(), m_Pos, Direction, GameServer()->Tuning()->m_LaserReach, m_pPlayer->GetCID(), WEAPON_SHOTGUN);
 
 			GameServer()->CreateSound(m_Pos, SOUND_SHOTGUN_FIRE);
 		} break;
 
 		case WEAPON_GRENADE:
 		{
-			CProjectile *pProj = new CProjectile(GameWorld(), WEAPON_GRENADE,
+			CMsgPacker Msg(NETMSGTYPE_SV_EXTRAPROJECTILE);
+			if(!m_pPlayer->m_AccData.m_GrenadeSpread || m_GameZone)
+			{
+				CProjectile *pProj = new CProjectile(GameWorld(), WEAPON_GRENADE,
 				m_pPlayer->GetCID(),
 				ProjStartPos,
 				Direction,
@@ -389,10 +769,49 @@ void CCharacter::FireWeapon()
 			CNetObj_Projectile p;
 			pProj->FillInfo(&p);
 
-			CMsgPacker Msg(NETMSGTYPE_SV_EXTRAPROJECTILE);
+			
 			Msg.AddInt(1);
 			for(unsigned i = 0; i < sizeof(CNetObj_Projectile)/sizeof(int); i++)
 				Msg.AddInt(((int *)&p)[i]);
+
+			}
+			else
+			{
+				int ShotSpread = m_pPlayer->m_AccData.m_GrenadeSpread;
+
+				//CMsgPacker Msg(NETMSGTYPE_SV_EXTRAPROJECTILE);
+				Msg.AddInt(ShotSpread*2+1);
+
+				float Spreading[18*2+1];
+
+				for(int i = 0; i < 18*2+1; i++)
+				{
+					Spreading[i] = -1.260f + 0.070f * i;
+				}
+			
+				for(int i = -ShotSpread; i <= ShotSpread; ++i)
+				{
+					float a = GetAngle(Direction);
+					a += Spreading[i+18];
+					float v = 1-(absolute(i)/(float)ShotSpread);
+
+					float Speed = mix((float)GameServer()->Tuning()->m_ShotgunSpeeddiff, 1.0f, v);
+					CProjectile *pProj = new CProjectile(GameWorld(), WEAPON_GRENADE,
+						m_pPlayer->GetCID(),
+						ProjStartPos,
+						vec2(cosf(a), sinf(a))*Speed,
+						(int)(Server()->TickSpeed()*GameServer()->Tuning()->m_GrenadeLifetime),
+						1, true, 0, SOUND_GRENADE_EXPLODE, WEAPON_GRENADE);
+
+					// pack the Projectile and send it to the client DirectlyPikotee
+					CNetObj_Projectile p;
+					pProj->FillInfo(&p);
+
+					for(unsigned i = 0; i < sizeof(CNetObj_Projectile)/sizeof(int); i++)
+						Msg.AddInt(((int *)&p)[i]);
+				}
+			}
+
 			Server()->SendMsg(&Msg, 0, m_pPlayer->GetCID());
 
 			GameServer()->CreateSound(m_Pos, SOUND_GRENADE_FIRE);
@@ -400,37 +819,116 @@ void CCharacter::FireWeapon()
 
 		case WEAPON_RIFLE:
 		{
-			new CLaser(GameWorld(), m_Pos, Direction, GameServer()->Tuning()->m_LaserReach, m_pPlayer->GetCID());
-			GameServer()->CreateSound(m_Pos, SOUND_RIFLE_FIRE);
+			if(m_Protected && !m_JailRifle)
+				return;
+
+			if(!m_pPlayer->m_Insta && !m_GameZone && !m_JailRifle)
+			{
+				if(m_pPlayer->m_AccData.m_RiflePlasma && m_pPlayer->m_AciveUpgrade[m_ActiveWeapon] == 1)
+				{
+					m_ReloadTimer = Server()->TickSpeed()/3;
+					new CPlasma(GameWorld(), WEAPON_RIFLE, m_Pos, m_pPlayer->GetCID(), Direction);
+				}
+				else if(m_pPlayer->m_AccData.m_RifleSpread)
+				{
+					int ShotSpread = m_pPlayer->m_AccData.m_RifleSpread;
+					float Spreading[18*2+1];
+
+					for(int i = 0; i < 18*2+1; i++)
+					{
+						Spreading[i] = -1.260f + 0.070f * i;
+					}
+			
+					for(int i = -ShotSpread; i <= ShotSpread; ++i)
+					{
+						float a = GetAngle(Direction);
+						a += Spreading[i+18];
+						new CLaser(GameWorld(), m_Pos, vec2(cosf(a), sinf(a)), GameServer()->Tuning()->m_LaserReach, m_pPlayer->GetCID(), WEAPON_RIFLE);
+					}
+				}
+				else
+					new CLaser(GameWorld(), m_Pos, Direction, GameServer()->Tuning()->m_LaserReach, m_pPlayer->GetCID(), WEAPON_RIFLE);
+				
+				GameServer()->CreateSound(m_Pos, SOUND_RIFLE_FIRE);
+			}
+			else
+				new CLaser(GameWorld(), m_Pos, Direction, GameServer()->Tuning()->m_LaserReach, m_pPlayer->GetCID(), WEAPON_RIFLE);
+
 		} break;
 
 		case WEAPON_NINJA:
 		{
-			// reset Hit objects
-			m_NumObjectsHit = 0;
+			if(!m_Water && !m_SingleWater && !m_GameZone)
+			{
+				// reset Hit objects
+				m_NumObjectsHit = 0;
 
-			m_Ninja.m_ActivationDir = Direction;
-			m_Ninja.m_CurrentMoveTime = g_pData->m_Weapons.m_Ninja.m_Movetime * Server()->TickSpeed() / 1000;
-			m_Ninja.m_OldVelAmount = length(m_Core.m_Vel);
+				m_Ninja.m_ActivationDir = Direction;
+				m_Ninja.m_CurrentMoveTime = g_pData->m_Weapons.m_Ninja.m_Movetime * Server()->TickSpeed() / 1000;
+				m_Ninja.m_OldVelAmount = length(m_Core.m_Vel);
 
-			GameServer()->CreateSound(m_Pos, SOUND_NINJA_FIRE);
+				GameServer()->CreateSound(m_Pos, SOUND_NINJA_FIRE);
+			}
 		} break;
 
 	}
 
 	m_AttackTick = Server()->Tick();
 
-	if(m_aWeapons[m_ActiveWeapon].m_Ammo > 0) // -1 == unlimited
+	if(m_aWeapons[m_ActiveWeapon].m_Ammo > 0 && !m_pPlayer->m_AccData.m_InfinityAmmo && !m_pPlayer->m_Insta && !m_GameZone) // -1 == unlimited
 		m_aWeapons[m_ActiveWeapon].m_Ammo--;
 
 	if(!m_ReloadTimer)
-		m_ReloadTimer = g_pData->m_Weapons.m_aId[m_ActiveWeapon].m_Firedelay * Server()->TickSpeed() / 1000;
+	{
+		if(!m_pPlayer->m_Insta && !m_GameZone)
+			m_ReloadTimer = g_pData->m_Weapons.m_aId[m_ActiveWeapon].m_Firedelay /(m_pPlayer->m_AccData.m_FastReload + 1) * Server()->TickSpeed() / 1000;
+		else
+			m_ReloadTimer = g_pData->m_Weapons.m_aId[m_ActiveWeapon].m_Firedelay * Server()->TickSpeed()/1000;
+	}
+}
+
+// City
+int CCharacter::NewPlasma()
+{
+	if(m_Plasma > m_pPlayer->m_AccData.m_HammerShot)
+		return 0;
+
+	int Num = 0;
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		CCharacter *VictimChr = GameServer()->GetPlayerChar(i);
+
+		if(!VictimChr || VictimChr == this || VictimChr->Protected() || VictimChr->m_God)
+			continue;
+		
+		if(!GameServer()->Collision()->IntersectLine(m_Pos, VictimChr->m_Pos, 0x0, 0x0))
+		{
+			new CPlasma(GameWorld(), WEAPON_HAMMER, m_Pos, m_pPlayer->GetCID(), i);
+			Num++;
+		}
+	}
+
+	return Num;
+}
+
+void CCharacter::HealthRegeneration()
+{
+	if(m_Health != 0 && m_pPlayer->m_AccData.m_HealthRegen && !(Server()->Tick() % (int)(251 - m_pPlayer->m_AccData.m_HealthRegen*10)))
+	{
+		if(m_Health < m_pPlayer->m_AccData.m_Health)
+			IncreaseHealth(1);
+		else if(m_Armor < m_pPlayer->m_AccData.m_Armor)
+			IncreaseArmor(1);
+	}
 }
 
 void CCharacter::HandleWeapons()
 {
 	//ninja
 	HandleNinja();
+
+	if(m_Frozen)
+		return;
 
 	// check reload timer
 	if(m_ReloadTimer)
@@ -444,7 +942,7 @@ void CCharacter::HandleWeapons()
 
 	// ammo regen
 	int AmmoRegenTime = g_pData->m_Weapons.m_aId[m_ActiveWeapon].m_Ammoregentime;
-	if(AmmoRegenTime)
+	if(AmmoRegenTime && !m_pPlayer->m_AccData.m_InfinityAmmo)
 	{
 		// If equipped and not active, regen ammo?
 		if (m_ReloadTimer <= 0)
@@ -517,6 +1015,10 @@ void CCharacter::OnDirectInput(CNetObj_PlayerInput *pNewInput)
 	mem_copy(&m_LatestPrevInput, &m_LatestInput, sizeof(m_LatestInput));
 	mem_copy(&m_LatestInput, pNewInput, sizeof(m_LatestInput));
 
+		// it is not allowed to aim in the center
+	if(m_LatestInput.m_TargetX == 0 && m_LatestInput.m_TargetY == 0)
+		m_LatestInput.m_TargetY = -1;
+
 	if(m_NumInputs > 2 && m_pPlayer->GetTeam() != TEAM_SPECTATORS)
 	{
 		HandleWeaponSwitch();
@@ -537,6 +1039,488 @@ void CCharacter::ResetInput()
 	m_Input.m_Jump = 0;
 	m_LatestPrevInput = m_LatestInput = m_Input;
 }
+void CCharacter::Booster()
+{
+	const float NORMAL = IsGrounded()?10:5;
+	const float FAST = IsGrounded()?30:20;
+
+	
+	// Booster
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOST_DOWN))
+		m_Core.m_Vel.y = NORMAL;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOST_UP))
+		m_Core.m_Vel.y = -NORMAL;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOST_RIGHT))
+		m_Core.m_Vel.x = NORMAL;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOST_LEFT))
+		m_Core.m_Vel.x = -NORMAL;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOST_HORI) && m_Core.m_Vel.x)
+		m_Core.m_Vel.x = m_Core.m_Vel.x>0?NORMAL:-NORMAL;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOST_VERT) && m_Core.m_Vel.y)
+		m_Core.m_Vel.y = m_Core.m_Vel.y>0?NORMAL:-NORMAL;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOST_ALL))
+	{
+		if(m_Core.m_Vel.x > 0.0001f)
+			m_Core.m_Vel.x = m_Core.m_Vel.x>0?NORMAL:-NORMAL;
+
+		if(m_Core.m_Vel.y)
+			m_Core.m_Vel.y = m_Core.m_Vel.y>0?NORMAL:-NORMAL;
+	} 
+
+	// Booster Wall
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTW_DOWN))
+	{
+		m_Core.m_Vel.y = NORMAL;
+		m_Core.m_Vel.x = 0;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTW_UP))
+	{
+		m_Core.m_Vel.y = -NORMAL;
+		m_Core.m_Vel.x = 0;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTW_RIGHT))
+	{
+		m_Core.m_Vel.x = NORMAL;
+		m_Core.m_Vel.y = -GameServer()->Tuning()->m_Gravity;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTW_LEFT))
+	{
+		m_Core.m_Vel.x = -NORMAL;
+		m_Core.m_Vel.y = -GameServer()->Tuning()->m_Gravity;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTW_HORI) && m_Core.m_Vel.x)
+	{
+		m_Core.m_Vel.x = m_Core.m_Vel.x>0?NORMAL:-NORMAL;
+		m_Core.m_Vel.y = -GameServer()->Tuning()->m_Gravity;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTW_VERT) && m_Core.m_Vel.y)
+	{
+		m_Core.m_Vel.y = m_Core.m_Vel.y>0?NORMAL:-NORMAL;
+		m_Core.m_Vel.x = 0;
+	}
+
+	// Fast Booster
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTF_DOWN))
+		m_Core.m_Vel.y = FAST;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTF_UP))
+		m_Core.m_Vel.y = -FAST;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTF_RIGHT))
+		m_Core.m_Vel.x = FAST;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTF_LEFT))
+		m_Core.m_Vel.x = -FAST;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTF_HORI) && m_Core.m_Vel.x)
+		m_Core.m_Vel.x = m_Core.m_Vel.x>0?FAST:-FAST;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTF_VERT) && m_Core.m_Vel.y)
+		m_Core.m_Vel.y = m_Core.m_Vel.y>0?FAST:-FAST;
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTF_ALL))
+	{
+		if(m_Core.m_Vel.x > 0.0001f)
+			m_Core.m_Vel.x = m_Core.m_Vel.x>0?FAST:-FAST;
+
+		if(m_Core.m_Vel.y)
+			m_Core.m_Vel.y = m_Core.m_Vel.y>0?FAST:-FAST;
+	}
+
+	// Fast Booster Wall
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTFW_DOWN))
+	{
+		m_Core.m_Vel.y = FAST;
+		m_Core.m_Vel.x = 0;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTFW_UP))
+	{
+		m_Core.m_Vel.y = -FAST;
+		m_Core.m_Vel.x = 0;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTFW_RIGHT))
+	{
+		m_Core.m_Vel.x = FAST;
+		m_Core.m_Vel.y = -GameServer()->Tuning()->m_Gravity;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTFW_LEFT))
+	{
+		m_Core.m_Vel.x = -FAST;
+		m_Core.m_Vel.y = -GameServer()->Tuning()->m_Gravity;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTFW_HORI) && m_Core.m_Vel.x)
+	{
+		m_Core.m_Vel.x = m_Core.m_Vel.x>0?FAST:-FAST;
+		m_Core.m_Vel.y = -GameServer()->Tuning()->m_Gravity;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_BOOSTFW_VERT) && m_Core.m_Vel.y)
+	{
+		m_Core.m_Vel.y = m_Core.m_Vel.y>0?FAST:-FAST;
+		m_Core.m_Vel.x = 0;
+	}
+
+	
+	// Rankzones
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_POLICE) && Server()->AuthLvl(m_pPlayer->GetCID()) < 1)
+	{
+		GameServer()->SendBroadcast("Policezone - Acces denied", m_pPlayer->GetCID());
+		Die(m_pPlayer->GetCID(), WEAPON_WORLD);
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_DONOR) && !m_pPlayer->m_AccData.m_Donor && Server()->AuthLvl(m_pPlayer->GetCID()) < 2)
+	{
+		GameServer()->SendBroadcast("Donorzone - Acces denied", m_pPlayer->GetCID());
+		Die(m_pPlayer->GetCID(), WEAPON_WORLD);
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_ADMIN) && Server()->AuthLvl(m_pPlayer->GetCID()) < 2)
+	{
+		GameServer()->SendBroadcast("Adminzone - Acces denied", m_pPlayer->GetCID());
+		Die(m_pPlayer->GetCID(), WEAPON_WORLD);
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_VIP) && !m_pPlayer->m_AccData.m_VIP && Server()->AuthLvl(m_pPlayer->GetCID()) < 2)
+	{
+		GameServer()->SendBroadcast("VIPzone - Acces denied", m_pPlayer->GetCID());
+		Die(m_pPlayer->GetCID(), WEAPON_WORLD);
+	}
+	//Water zeugs :D
+
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_WATER))
+	{
+		if(m_Core.m_Vel.y > 10)
+			m_Core.m_Vel.y = 7;
+
+		m_Water = true;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_NOWATER))
+	{
+		if(m_Water && !m_Frozen)
+			m_Core.m_Jumped &= ~2;
+
+		m_Water = false;
+	}
+
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_SINGLE_WATER))
+	{
+		if(m_Core.m_Vel.y > 10)
+			m_Core.m_Vel.y = 7;
+
+		m_SingleWater = true;
+	}
+	else
+	{
+		if(m_SingleWater && !m_Frozen)
+			m_Core.m_Jumped &= ~2;
+		m_SingleWater = false;
+	}
+			
+	if(m_Water || m_SingleWater)
+	{
+		if(((GameServer()->Collision()->IsTile(vec2(m_Pos.x, m_Pos.y-32), TILE_NOWATER) && m_Water && !GameServer()->Collision()->IsTile(vec2(m_Pos.x, m_Pos.y-32), TILE_SINGLE_WATER)) || 
+			(!GameServer()->Collision()->IsTile(vec2(m_Pos.x, m_Pos.y-32), TILE_WATER) && m_SingleWater && !GameServer()->Collision()->IsTile(vec2(m_Pos.x, m_Pos.y-32), TILE_SINGLE_WATER)))
+			&& m_Input.m_Direction)
+		{
+			m_Core.m_Vel.y -= 1.3f;
+		}
+		else
+		{
+			if(m_Core.m_Vel.y > -0.45f)
+				//m_Core.m_Vel.x /= 1.1f;
+				m_Core.m_Vel.y -= 0.45f;
+			else
+				m_Core.m_Vel.y = -0.45f;
+		}
+
+		if(m_Input.m_Jump)
+			m_Core.m_Vel.y = -3;
+		
+		m_Core.m_Vel.x /= 2;
+	
+	}
+
+	//Space zeugs 
+	/*if(GameServer()->Collision()->IsTile(m_Pos, TILE_SINGLE_SPACE))
+	{
+		m_SingleSpace = true;
+		m_Core.m_Vel.y = 0;
+	}
+	else
+		m_SingleSpace = false;
+
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_SPACE))
+	{
+		m_Space = true;
+	}
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_NOSPACE))
+	{
+		m_Space = false;
+	}
+	if(m_Space)
+	{
+		m_Core.m_Vel.y = 0;
+	}*/
+	
+	if(m_Water || m_SingleWater || m_Space || m_SingleSpace)
+	{
+		m_Luft++;
+
+		if(m_Luft >= 50)
+		{
+			if(m_Armor)
+				m_Armor--;
+			else
+				m_Health--;
+		m_Luft = 1;
+
+		if(m_Health <= 0)
+			Die(m_pPlayer->GetCID(), WEAPON_WORLD);
+
+		}
+	}
+	else
+		m_Luft = 0;
+
+	//Insta <3
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_INSTA_START))
+	{
+		if(!m_pPlayer->m_Insta)
+		{
+			GameServer()->SendBroadcast("Entered insta zone (/insta to quit)", m_pPlayer->GetCID());
+			m_pPlayer->m_Insta = true;
+			//m_ActiveWeapon = WEAPON_RIFLE;
+			SetWeapon(WEAPON_RIFLE);
+			m_aWeapons[WEAPON_RIFLE].m_Ammo = 10;
+			m_Protected = false;
+		}
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_INSTA_STOP))
+	{
+		if(m_pPlayer->m_Insta)
+		{
+			GameServer()->SendBroadcast("Left insta zone", m_pPlayer->GetCID());
+			m_pPlayer->m_Insta = false;
+			m_ActiveWeapon = WEAPON_GUN;
+		}
+	}
+
+	//DONOR MONEY TILE!!! :D <3
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_MONEY_DONOR))
+	{
+		if(m_pPlayer->m_AccData.m_Donor)
+		{
+			if(Server()->Tick()%50 == 0)
+			{
+				char aBuf[50];
+				int Money = 1000;
+	
+				if(Money)
+				{
+					//if(m_pPlayer->m_AccData.m_VIP)
+					//	Money *= 2;
+
+					m_pPlayer->m_AccData.m_Money += Money;
+					str_format(aBuf, sizeof(aBuf), "Money: %d TC | +%d", m_pPlayer->m_AccData.m_Money, Money);
+					GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+				}
+			}
+		}
+		else
+		{
+			GameServer()->SendBroadcast("Donor Money zone - Acces denied", m_pPlayer->GetCID());
+			Die(m_pPlayer->GetCID(), WEAPON_WORLD);
+		}
+	
+	}
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_LIFE))
+	{
+		char aBuf[50];
+		m_NeedArmor = GetPlayer()->m_AccData.m_Armor;
+		m_NeedHealth = GetPlayer()->m_AccData.m_Health;
+		m_ArmorCost = m_NeedArmor -= m_Armor;
+		m_HealthCost = m_NeedHealth -= m_Health;
+		m_LifeCost = (m_ArmorCost+m_HealthCost)*50;
+		if(m_LifeCost > 0)
+		{
+				if(GetPlayer()->m_AccData.m_Money >= m_LifeCost)
+				{
+					m_Armor += m_NeedArmor;
+					m_Health += m_NeedHealth;
+
+					GetPlayer()->m_AccData.m_Money -= m_LifeCost;
+					str_format(aBuf, sizeof(aBuf), "Money: %d TC | -%d\nHealth: %d\nArmor: %d", m_pPlayer->m_AccData.m_Money, m_LifeCost, m_Health, m_Armor);
+					GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+				}
+			
+			else
+			{
+				str_format(aBuf, sizeof(aBuf), "You need %d TC",m_LifeCost);
+				GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+			}
+		}
+		
+			
+			
+	}
+
+}
+
+void CCharacter::SetPosition(vec2 Pos)
+{
+	if(m_Input.m_Hook)
+		m_Input.m_Hook = 0;
+
+	m_Core.m_Pos = Pos;
+	GameServer()->m_TeleNR[m_pPlayer->GetCID()] = 0;
+	m_Home = 0;
+}
+
+void CCharacter::Freeze(int Seconds)
+{
+	m_EmoteType = EMOTE_BLINK;
+	m_EmoteStop = Server()->Tick() + Seconds;
+	
+	if(!m_Frozen)
+		m_FreezeWeapon = m_ActiveWeapon;
+
+	m_Frozen = Seconds;
+	m_aWeapons[WEAPON_NINJA].m_Ammo = 0;
+	SetWeapon(WEAPON_NINJA);
+}
+
+void CCharacter::Unfreeze()
+{
+	//m_EmoteType = EMOTE_NORMAL;
+	m_EmoteStop = Server()->Tick();
+	m_Frozen = m_Frozen?1:0;
+}
+
+void CCharacter::Transfer(int Value)
+{
+	char aBuf[256];
+
+		if(Value <= 0)
+		{
+			if(!Value)
+				GameServer()->SendBroadcast("Ever seen a 0$ dollar bill?", m_pPlayer->GetCID());
+			else
+				GameServer()->SendBroadcast("Are you trying to cheat money?", m_pPlayer->GetCID());
+			return;
+		}
+
+	else if(m_pPlayer->m_AccData.m_Money < Value)
+	{
+		GameServer()->SendBroadcast("Not enough money", m_pPlayer->GetCID());
+		return;
+	}
+	else
+	{
+
+
+		int TestLength = 32;
+		vec2 SnapPos = vec2(m_Pos.x+m_LatestInput.m_TargetX,m_Pos.y+m_LatestInput.m_TargetY);
+
+		if(GameServer()->Collision()->CheckPoint(SnapPos))
+		{
+			GameServer()->SendBroadcast("The wall doesn't need money...", m_pPlayer->GetCID());
+			return;
+		}
+
+		/*for(int i = 0; i < 4; i++)
+		{
+			vec2 TestPos = SnapPos;
+
+			if(!(i%2))
+				TestPos.x = (int)m_Pos.x + TestLength * (i==0?1:-1);
+			else
+				TestPos.y = (int)m_Pos.y + TestLength * (i==3?1:-1);	
+			
+			if(GameServer()->Collision()->CheckPoint(SnapPos))
+			{
+				GameServer()->SendBroadcast("The wall doesn't need money...", m_pPlayer->GetCID());
+				return;
+			}
+		}*/
+
+		m_pPlayer->m_AccData.m_Money -= Value;
+		new CTransfer(GameWorld(), Value, SnapPos);
+		str_format(aBuf, sizeof(aBuf), "Money-Transfer-Object (%i) | -%i", m_pPlayer->m_AccData.m_Money, Value);
+		GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+	}
+}
+
+
+
+void CCharacter::HandleCity()
+{
+	char aBuf[128];
+
+	HealthRegeneration();
+
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_SPACE))
+			m_Core.m_Vel.y -= GameServer()->Tuning()->m_Gravity;
+
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_SAVE) && !m_Protected)
+	{
+		GameServer()->SendBroadcast("Protected zone entered", m_pPlayer->GetCID());
+		m_Protected = true;
+		m_Core.m_Protected = true;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_KILL) && m_Protected)
+	{
+		GameServer()->SendBroadcast("Protected zone left", m_pPlayer->GetCID());
+		m_Protected = false;
+		m_Core.m_Protected = false;
+	}
+
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_GAMEZONE_START) && !m_GameZone)
+	{
+		GameServer()->SendBroadcast("Gamezone entered", m_pPlayer->GetCID());
+		m_GameZone = true;
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_GAMEZONE_END) && m_GameZone)
+	{
+		GameServer()->SendBroadcast("Gamezone left", m_pPlayer->GetCID());
+		m_GameZone = false;
+	}
+
+	if(m_ActiveWeapon != WEAPON_RIFLE && m_pPlayer->m_Insta)
+		SetWeapon(WEAPON_RIFLE);
+
+	Booster();
+
+	if(GameServer()->Collision()->IsTile(m_Pos, TILE_SINGLE_FREEZE))
+	{
+		Freeze(3*50);
+	}
+	else if(GameServer()->Collision()->IsTile(m_Pos, TILE_UNFREEZE))
+		Unfreeze();
+
+	if(m_Invisible && m_pPlayer->m_Score > 20)
+	{
+		GameServer()->SendBroadcast("Invisibility disabled, Score > 20", m_pPlayer->GetCID());
+		m_Invisible = 0;
+	}
+
+	if(Server()->Tick()%50 == 0)
+	{
+		int Money = GameServer()->Collision()->TileMoney(m_Pos.x, m_Pos.y);
+	
+		if(Money)
+		{
+			if(m_pPlayer->m_AccData.m_VIP)
+				Money *= 2;
+
+			m_pPlayer->m_AccData.m_Money += Money;
+			str_format(aBuf, sizeof(aBuf), "Money: %d TC | +%d", m_pPlayer->m_AccData.m_Money, Money);
+			GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCID());
+		}
+	
+
+		if(m_pPlayer->m_AccData.m_UserID)
+			m_pPlayer->m_pAccount->Apply();
+	}
+
+}
+
+bool CCharacter::Protected()
+{
+	if(m_GameZone || m_Protected || m_SpawnProtection + 3 * Server()->TickSpeed() > Server()->Tick())
+		return true;
+
+	return false;
+}
 
 void CCharacter::Tick()
 {
@@ -549,6 +1533,35 @@ void CCharacter::Tick()
 		m_pPlayer->m_ForceBalanced = false;
 	}
 
+	// City
+	HandleCity();
+
+	if(!m_Frozen && !m_pPlayer->m_Insta && !m_GameZone && !m_Water && !m_SingleWater)
+	{
+		
+		if(m_pPlayer->m_AccData.m_InfinityJumps == 1)
+			m_Core.m_Jumped &= ~2;
+		else if(m_pPlayer->m_AccData.m_InfinityJumps ==  2 && m_Input.m_Jump)
+			m_Core.m_Vel.y = -GameServer()->Tuning()->m_GroundJumpImpulse;
+	}
+
+	
+
+	if(m_Frozen)
+	{
+		if(m_Frozen%50==0 && m_FreezeTick+25 < Server()->Tick())
+		{
+			m_FreezeTick = Server()->Tick();
+			GameServer()->CreateDamageInd(m_Pos, GetAngle(vec2(0, 1)), (int)(m_Frozen/50));
+		}
+
+		ResetInput();
+		m_Frozen--;
+
+		if(!m_Frozen)
+			m_FreezeEnd = true;
+	}
+	
 	m_Core.m_Input = m_Input;
 	m_Core.Tick(true);
 
@@ -562,9 +1575,31 @@ void CCharacter::Tick()
 		Die(m_pPlayer->GetCID(), WEAPON_WORLD);
 	}
 
-	// handle Weapons
+	// handle Weapons	
 	HandleWeapons();
 
+	if(m_FreezeEnd)
+	{
+		if(m_pPlayer->m_AccData.m_NinjaPermanent || (Server()->Tick() - m_Ninja.m_ActivationTick) < (g_pData->m_Weapons.m_Ninja.m_Duration * Server()->TickSpeed() / 1000))
+		{
+			m_aWeapons[WEAPON_NINJA].m_Ammo = -1;
+			m_aWeapons[WEAPON_NINJA].m_Got = true;
+
+			if(m_FreezeWeapon == WEAPON_NINJA)
+			{
+				SetWeapon(WEAPON_NINJA);
+				m_LastWeapon = m_ActiveWeapon?WEAPON_HAMMER:WEAPON_GUN;
+			}
+		}
+		
+		m_FreezeEnd = false;
+	}
+
+	
+	
+	if(m_Health <= 0 && m_Armor <= 0)
+		Die(m_pPlayer->GetCID(), WEAPON_WORLD);
+	
 	// Previnput
 	m_PrevInput = m_Input;
 	return;
@@ -655,22 +1690,28 @@ void CCharacter::TickDefered()
 
 bool CCharacter::IncreaseHealth(int Amount)
 {
-	if(m_Health >= 10)
+	if(m_Health >= m_pPlayer->m_AccData.m_Health)
 		return false;
-	m_Health = clamp(m_Health+Amount, 0, 10);
+	m_Health = clamp(m_Health+Amount, 0, m_pPlayer->m_AccData.m_Health);
 	return true;
 }
 
 bool CCharacter::IncreaseArmor(int Amount)
 {
-	if(m_Armor >= 10)
+	if(m_Armor >= m_pPlayer->m_AccData.m_Armor)
 		return false;
-	m_Armor = clamp(m_Armor+Amount, 0, 10);
+	m_Armor = clamp(m_Armor+Amount, 0, m_pPlayer->m_AccData.m_Armor);
 	return true;
 }
 
 void CCharacter::Die(int Killer, int Weapon)
 {
+	CCharacter *pKiller = GameServer()->GetPlayerChar(Killer);
+	if(!pKiller)
+		return;
+	if(Weapon >= 0 && (Protected() && !pKiller->m_JailRifle|| m_God && !pKiller->m_JailRifle))
+		return;
+
 	// we got to wait 0.5 secs before respawning
 	m_pPlayer->m_RespawnTick = Server()->Tick()+Server()->TickSpeed()/2;
 	int ModeSpecial = GameServer()->m_pController->OnCharacterDeath(this, GameServer()->m_apPlayers[Killer], Weapon);
@@ -703,9 +1744,19 @@ void CCharacter::Die(int Killer, int Weapon)
 
 bool CCharacter::TakeDamage(vec2 Force, int Dmg, int From, int Weapon)
 {
+	if((Protected() && !m_GameZone) || m_God || m_pPlayer->m_Insta)
+		return false;
+
 	m_Core.m_Vel += Force;
 
+	if(m_GameZone)
+		return false;
+
 	if(GameServer()->m_pController->IsFriendlyFire(m_pPlayer->GetCID(), From) && !g_Config.m_SvTeamdamage)
+		return false;
+
+	// City
+	if(m_pPlayer->m_AccData.m_NoSelfDMG && From == m_pPlayer->GetCID())
 		return false;
 
 	// m_pPlayer only inflicts half damage on self
@@ -800,6 +1851,9 @@ void CCharacter::Snap(int SnappingClient)
 	if(NetworkClipped(SnappingClient))
 		return;
 
+	if(m_Invisible && !Server()->IsAuthed(SnappingClient) && SnappingClient != m_pPlayer->GetCID())
+		return;
+
 	CNetObj_Character *pCharacter = static_cast<CNetObj_Character *>(Server()->SnapNewItem(NETOBJTYPE_CHARACTER, m_pPlayer->GetCID(), sizeof(CNetObj_Character)));
 	if(!pCharacter)
 		return;
@@ -821,7 +1875,7 @@ void CCharacter::Snap(int SnappingClient)
 	// set emote
 	if (m_EmoteStop < Server()->Tick())
 	{
-		m_EmoteType = EMOTE_NORMAL;
+		m_EmoteType = m_Emote;
 		m_EmoteStop = -1;
 	}
 
@@ -852,4 +1906,6 @@ void CCharacter::Snap(int SnappingClient)
 	}
 
 	pCharacter->m_PlayerFlags = GetPlayer()->m_PlayerFlags;
+
+			
 }
