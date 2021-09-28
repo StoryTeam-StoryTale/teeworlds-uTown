@@ -562,7 +562,7 @@ void CGameContext::OnTick()
 				if(pChar)
 				{
 					char aBuf[256];
-					str_format(aBuf, sizeof(aBuf), "Money: %i TC", pChar->GetPlayer()->m_AccData.m_Money);
+					str_format(aBuf, sizeof(aBuf), "钱: %i TC", pChar->GetPlayer()->m_AccData.m_Money);
 					SendBroadcast(aBuf, i);
 				}
 			}
@@ -603,12 +603,12 @@ void CGameContext::OnClientEnter(int ClientID)
 	//world.insert_entity(&players[client_id]);
 	m_apPlayers[ClientID]->Respawn();
 	char aBuf[512];
-	str_format(aBuf, sizeof(aBuf), "'%s' entered and joined the %s", Server()->ClientName(ClientID), m_pController->GetTeamName(m_apPlayers[ClientID]->GetTeam()));
+	str_format(aBuf, sizeof(aBuf), "'%s'加入了%s", Server()->ClientName(ClientID), m_pController->GetTeamName(m_apPlayers[ClientID]->GetTeam()));
 	SendChat(-1, CGameContext::CHAT_ALL, aBuf);
 
-	SendChatTarget(ClientID, "Welcome on uTown");
-	SendChatTarget(ClientID, "Made by Pikotee & KlickFoot");
-	SendChatTarget(ClientID, "use /help for some help");
+	SendChatTarget(ClientID, "欢迎来到uTown！");
+	SendChatTarget(ClientID, "制作人： Pikotee & KlickFoot");
+	SendChatTarget(ClientID, "输入/help获取帮助");
 
 	str_format(aBuf, sizeof(aBuf), "team_join player='%d:%s' team=%d", ClientID, Server()->ClientName(ClientID), m_apPlayers[ClientID]->GetTeam());
 	Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "game", aBuf);
@@ -900,7 +900,7 @@ void CGameContext::OnMessage(int MsgID, CUnpacker *pUnpacker, int ClientID)
 		// City
 		if(g_Config.m_SvTournamentMode && pPlayer->GetTeam() == TEAM_SPECTATORS && !pPlayer->m_AccData.m_UserID)
 		{
-			SendBroadcast("You must be logged in to join the game", ClientID);
+			SendBroadcast("你必须先登录/注册才能进入城市", ClientID);
 			return;
 		}
 
@@ -1053,7 +1053,7 @@ void CGameContext::OnMessage(int MsgID, CUnpacker *pUnpacker, int ClientID)
 		if(str_comp(aOldName, Server()->ClientName(ClientID)) != 0)
 		{
 			char aChatText[256];
-			str_format(aChatText, sizeof(aChatText), "'%s' changed name to '%s'", aOldName, Server()->ClientName(ClientID));
+			str_format(aChatText, sizeof(aChatText), "'%s'将身份证信息：姓名 改为'%s'", aOldName, Server()->ClientName(ClientID));
 			SendChat(-1, CGameContext::CHAT_ALL, aChatText);
 		}
 		Server()->SetClientClan(ClientID, pMsg->m_pClan);
